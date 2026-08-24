@@ -106,6 +106,16 @@ export interface OpcoesClone {
    * aqui e FIEL (copia o do original) e quem confirma o efeito e a sondagem, nao esta suposicao.
    */
   familyName?: string;
+  /**
+   * GTIN (EAN/UPC) do produto.
+   *
+   * Recriar nao e clonar: o anuncio novo nasce sob as regras de HOJE. Categorias que passaram a
+   * exigir GTIN recusam o clone de um anuncio antigo que so tinha EMPTY_GTIN_REASON, com
+   * "item.attribute.missing_conditional_required".
+   *
+   * Aceita o codigo de barras, ou "-1" / "n/a" para declarar que o produto nao tem codigo.
+   */
+  gtin?: string;
 }
 
 export interface ResultadoClone {
@@ -142,6 +152,20 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
 
   const frete = limparShipping(item?.shipping);
   if (frete) payload.shipping = frete; else delete payload.shipping;
+
+  // GTIN informado pelo operador: substitui o que houver, pra nao duplicar o atributo.
+  const gtin = (opts.gtin || '').trim();
+  if (gtin) {
+    const lista: any[] = Array.isArray(payload.attributes) ? payload.attributes.filter((a: any) => a.id !== 'GTIN') : [];
+    const semCodigo = /^(-1|n\/?a|sem|nao|não)$/i.test(gtin);
+    lista.push(semCodigo ? { id: 'GTIN', value_id: '-1' } : { id: 'GTIN', value_name: gtin });
+    payload.attributes = lista;
+    avisos.push(
+      semCodigo
+        ? 'GTIN declarado como inexistente (-1). Se a categoria exigir o codigo de verdade, o ML recusa.'
+        : `GTIN ${gtin} adicionado ao anuncio novo.`,
+    );
+  }
 
   // family_name e title sao MUTUAMENTE EXCLUSIVOS.
   // Sem family_name: "body.required_fields ... [family_name]".

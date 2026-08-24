@@ -37,9 +37,13 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/listings/:itemId/recreate/simulate', async (req, reply) => {
     if (!exigeAuth(reply)) return;
     const { itemId } = req.params as { itemId: string };
-    const body = (req.body as { sufixoTitulo?: string; familyName?: string }) || {};
+    const body = (req.body as { sufixoTitulo?: string; familyName?: string; gtin?: string }) || {};
     try {
-      const sim = await simularRecriacao(itemId, { sufixoTitulo: body.sufixoTitulo, familyName: body.familyName });
+      const sim = await simularRecriacao(itemId, {
+        sufixoTitulo: body.sufixoTitulo,
+        familyName: body.familyName,
+        gtin: body.gtin,
+      });
       return { ...sim, escritaHabilitada: config.recreateEnabled };
     } catch (err: any) {
       reply.code(err instanceof RecriacaoBloqueada ? 400 : err?.status === 404 ? 404 : 500);

@@ -278,3 +278,37 @@ describe('title x family_name — mutuamente exclusivos', () => {
     expect(avisos.join(' ')).toContain('sufixo de titulo foi ignorado');
   });
 });
+
+describe('GTIN — recriar cria sob as regras de hoje', () => {
+  it('adiciona o GTIN informado como value_name', () => {
+    const { payload } = montarClone(itemBase, { gtin: '7891234567890' });
+    expect(payload.attributes).toContainEqual({ id: 'GTIN', value_name: '7891234567890' });
+  });
+
+  it('aceita declarar que o produto nao tem codigo', () => {
+    for (const entrada of ['-1', 'n/a', 'N/A', 'sem', 'nao']) {
+      const { payload } = montarClone(itemBase, { gtin: entrada });
+      expect(payload.attributes).toContainEqual({ id: 'GTIN', value_id: '-1' });
+    }
+  });
+
+  it('substitui o GTIN que ja existia em vez de duplicar', () => {
+    const { payload } = montarClone(
+      { ...itemBase, attributes: [{ id: 'GTIN', value_name: '111' }, { id: 'BRAND', value_id: '9' }] },
+      { gtin: '7891234567890' },
+    );
+    const gtins = payload.attributes.filter((a: any) => a.id === 'GTIN');
+    expect(gtins).toHaveLength(1);
+    expect(gtins[0].value_name).toBe('7891234567890');
+    expect(payload.attributes).toContainEqual({ id: 'BRAND', value_id: '9' });
+  });
+
+  it('nao mexe nos atributos quando nenhum GTIN e informado', () => {
+    const { payload } = montarClone(itemBase);
+    expect(payload.attributes.some((a: any) => a.id === 'GTIN')).toBe(false);
+  });
+
+  it('avisa quando o GTIN e declarado como inexistente', () => {
+    expect(montarClone(itemBase, { gtin: '-1' }).avisos.join(' ')).toContain('inexistente');
+  });
+});
