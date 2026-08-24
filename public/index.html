@@ -247,15 +247,17 @@ function render(s) {
   // nome diferente tende a criar um agrupamento novo (nota zera). Quem confirma e a sondagem.
   const igual = s.familyName === s.familyNameOriginal;
   h += '<div class="panel" style="background:var(--panel-2);margin-bottom:12px">' +
-    '<div class="muted" style="margin-bottom:6px">Nome de família — é ele que decide o agrupamento das opiniões</div>' +
+    '<div class="muted" style="margin-bottom:6px">Nome de família — decide o agrupamento das opiniões <b>e o título</b> do anúncio novo</div>' +
     '<div class="row">' +
       '<input id="familyInput" class="txt" style="flex:1;min-width:240px" value="' + esc(s.familyName || '') + '" />' +
       '<button class="secondary" onclick="resimular()">Re-simular com este nome</button>' +
     '</div>' +
     '<div class="muted" style="margin-top:6px">' +
-      (igual
-        ? 'Igual ao original — o ML tende a reagrupar no mesmo produto do usuário, e a nota viria junto.'
-        : 'Diferente do original (<b>' + esc(s.familyNameOriginal || '—') + '</b>) — tende a criar um agrupamento novo, sem opiniões.') +
+      (!s.familyName
+        ? 'Este anúncio não usa família. O título vai igual ao original. Se preencher um nome aqui, o Mercado Livre passa a gerar o título a partir dele.'
+        : igual
+          ? 'Igual ao original — o ML tende a reagrupar no mesmo produto do usuário, e a nota viria junto. O título continua o mesmo.'
+          : 'Diferente do original (<b>' + esc(s.familyNameOriginal || '—') + '</b>) — tende a criar um agrupamento novo, sem opiniões. <b>Atenção: isso muda o título que o comprador vê.</b>') +
     '</div></div>';
 
   h += '<div id="sondagemBox"></div>';

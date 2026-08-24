@@ -143,10 +143,25 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
   const frete = limparShipping(item?.shipping);
   if (frete) payload.shipping = frete; else delete payload.shipping;
 
-  // family_name e obrigatorio no POST /items. Sem ele o ML recusa com body.required_fields.
-  const familia = (opts.familyName || '').trim() || item?.family_name || item?.title;
+  // family_name e title sao MUTUAMENTE EXCLUSIVOS.
+  // Sem family_name: "body.required_fields ... [family_name]".
+  // Com family_name + title: "The fields [title] are invalid for requested call."
+  // Em anuncio de familia, o ML GERA o titulo a partir do nome da familia + atributos.
+  // Sem fallback pro titulo de proposito: o clone espelha a FORMA do original. Anuncio sem familia
+  // continua sendo anuncio com titulo proprio. Se o ML exigir familia, o operador informa uma no
+  // painel — e ai o titulo passa a ser derivado dela.
+  const familia = (opts.familyName || '').trim() || item?.family_name;
   if (familia) {
     payload.family_name = String(familia).slice(0, 60);
+    // O titulo nao pode ir junto: quem manda no titulo, aqui, e o nome da familia.
+    delete payload.title;
+    avisos.push(
+      'O titulo nao e enviado: em anuncio de familia o ML monta o titulo a partir do nome da familia e dos ' +
+      'atributos. Ou seja, mudar o nome da familia MUDA O TITULO que o comprador ve.',
+    );
+    if ((opts.sufixoTitulo || '').trim()) {
+      avisos.push('O sufixo de titulo foi ignorado: com familia de produtos, quem define o titulo e o nome da familia.');
+    }
     if (opts.familyName && opts.familyName.trim() && opts.familyName.trim() !== (item?.family_name || item?.title)) {
       avisos.push(
         `Nome de familia alterado para "${payload.family_name}". Isso tende a criar um produto do usuario NOVO — ` +
@@ -160,18 +175,21 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
     }
   }
 
-  const sufixo = (opts.sufixoTitulo || '').trim();
-  if (sufixo) {
-    const novo = `${item.title} ${sufixo}`.trim();
-    // O ML corta titulo em 60 caracteres: melhor avisar do que deixar o ML truncar sozinho.
-    if (novo.length > 60) {
-      avisos.push(`Titulo com sufixo ficaria com ${novo.length} caracteres (limite 60). Sufixo ignorado.`);
-      payload.title = item.title;
+  // Titulo so quando NAO ha familia: com family_name, quem monta o titulo e o ML.
+  if (!payload.family_name) {
+    const sufixo = (opts.sufixoTitulo || '').trim();
+    if (sufixo) {
+      const comSufixo = `${item.title} ${sufixo}`.trim();
+      // O ML corta titulo em 60 caracteres: melhor avisar do que deixar o ML truncar sozinho.
+      if (comSufixo.length > 60) {
+        avisos.push(`Titulo com sufixo ficaria com ${comSufixo.length} caracteres (limite 60). Sufixo ignorado.`);
+        payload.title = item.title;
+      } else {
+        payload.title = comSufixo;
+      }
     } else {
-      payload.title = novo;
+      payload.title = item.title;
     }
-  } else {
-    payload.title = item.title;
   }
 
   // Fotos por id: o ML reaproveita a imagem ja hospedada.
@@ -351,7 +369,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     catalogListing: item.catalog_listing === true,
     catalogProductId: item.catalog_product_id ?? null,
     familyName: payload.family_name ?? null,
-    familyNameOriginal: item.family_name ?? item.title ?? null,
+    familyNameOriginal: item.family_name ?? null,
     payload,
     avisos,
     validacao,

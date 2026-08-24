@@ -214,8 +214,10 @@ describe('family_name — a alavanca do agrupamento das opinioes', () => {
     expect(montarClone(comFamilia).payload.family_name).toBe('Chave Tic Tac 200W');
   });
 
-  it('cai no titulo quando o anuncio original nao tem family_name', () => {
-    expect(montarClone(itemBase).payload.family_name).toBe(itemBase.title);
+  it('nao inventa familia quando o original nao tem: manda o titulo, como o original', () => {
+    const { payload } = montarClone(itemBase);
+    expect(payload).not.toHaveProperty('family_name');
+    expect(payload.title).toBe(itemBase.title);
   });
 
   it('respeita o nome escolhido pelo operador', () => {
@@ -249,5 +251,30 @@ describe('validacao do id do anuncio', () => {
     for (const id of ['MLBU4275986047', 'https://mercadolivre.com.br/p/MLB19872191', '', 'abc']) {
       expect(/^ML[A-Z]\d+$/.test(id)).toBe(false);
     }
+  });
+});
+
+describe('title x family_name — mutuamente exclusivos', () => {
+  const comFamilia = { ...itemBase, family_name: 'Chave Tic Tac 200W' };
+
+  it('nao envia title quando ha family_name: o ML recusa com "The fields [title] are invalid"', () => {
+    const { payload } = montarClone(comFamilia);
+    expect(payload).not.toHaveProperty('title');
+    expect(payload.family_name).toBe('Chave Tic Tac 200W');
+  });
+
+  it('envia title quando o operador informa uma familia num anuncio que nao tinha', () => {
+    const { payload } = montarClone(itemBase, { familyName: 'Familia Nova' });
+    expect(payload).not.toHaveProperty('title');
+    expect(payload.family_name).toBe('Familia Nova');
+  });
+
+  it('avisa que mudar a familia muda o titulo visivel', () => {
+    expect(montarClone(comFamilia).avisos.join(' ')).toContain('MUDA O TITULO');
+  });
+
+  it('avisa que o sufixo de titulo perde o efeito', () => {
+    const { avisos } = montarClone(comFamilia, { sufixoTitulo: 'v2' });
+    expect(avisos.join(' ')).toContain('sufixo de titulo foi ignorado');
   });
 });

@@ -28,6 +28,20 @@ export class MlApiError extends Error {
  * aninhado em `cause[].causes`. Junta code E message quando os dois existem: so o code
  * ("body.invalid_fields") nao diz qual campo esta errado, e so a message as vezes vem vazia.
  */
+/**
+ * O ML NAO e consistente sobre qual campo carrega o texto legivel. Ja veio assim:
+ *   { message: "body.invalid_fields", error: "The fields [title] are invalid for requested call." }
+ * ou seja, `message` com o codigo e `error` com a frase. Em outras respostas e o contrario.
+ * Regra: quem tem espaco e a frase; o outro e o codigo. Junta os dois quando existirem.
+ */
+export function mensagemDeErro(data: any, status: number): string {
+  const campos = [data?.message, data?.error].filter((c: any) => typeof c === 'string' && c.trim());
+  const frase = campos.find((c: string) => /\s/.test(c.trim()));
+  const codigo = campos.find((c: string) => c !== frase);
+  if (frase && codigo) return `${codigo}: ${frase}`;
+  return frase || codigo || `Erro HTTP ${status}`;
+}
+
 function extrairCausas(data: any): string[] {
   const out: string[] = [];
 
@@ -115,7 +129,7 @@ async function mlRequest<T>(path: string, opts: MlRequestOpts = {}): Promise<T> 
     const data = text ? JSON.parse(text) : undefined;
 
     if (!res.ok) {
-      throw new MlApiError(res.status, data?.message || `Erro HTTP ${res.status}`, extrairCausas(data), data);
+      throw new MlApiError(res.status, mensagemDeErro(data, res.status), extrairCausas(data), data);
     }
 
     return data as T;
