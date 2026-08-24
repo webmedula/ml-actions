@@ -59,7 +59,7 @@ describe('montarClone', () => {
       'title', 'category_id', 'price', 'currency_id', 'buying_mode', 'listing_type_id',
       'condition', 'warranty', 'video_id', 'seller_custom_field', 'official_store_id',
       'channels', 'sale_terms', 'shipping', 'attributes', 'variations', 'pictures',
-      'available_quantity', 'status',
+      'family_name', 'available_quantity', 'status',
     ]);
     for (const chave of Object.keys(payload)) expect(aceitos.has(chave)).toBe(true);
   });
@@ -204,5 +204,36 @@ describe('interpretarSondagem', () => {
 
   it('indeterminado manda descartar, nunca seguir', () => {
     expect(interpretarSondagem(null, null).explicacao).toContain('descartar');
+  });
+});
+
+describe('family_name — a alavanca do agrupamento das opinioes', () => {
+  const comFamilia = { ...itemBase, family_name: 'Chave Tic Tac 200W' };
+
+  it('e sempre enviado: sem ele o ML recusa com body.required_fields', () => {
+    expect(montarClone(comFamilia).payload.family_name).toBe('Chave Tic Tac 200W');
+  });
+
+  it('cai no titulo quando o anuncio original nao tem family_name', () => {
+    expect(montarClone(itemBase).payload.family_name).toBe(itemBase.title);
+  });
+
+  it('respeita o nome escolhido pelo operador', () => {
+    const { payload } = montarClone(comFamilia, { familyName: 'Chave Tic Tac 200W v2' });
+    expect(payload.family_name).toBe('Chave Tic Tac 200W v2');
+  });
+
+  it('avisa que manter o nome tende a trazer a nota junto', () => {
+    expect(montarClone(comFamilia).avisos.join(' ')).toContain('MESMO produto do usuario');
+  });
+
+  it('avisa que mudar o nome tende a zerar', () => {
+    const { avisos } = montarClone(comFamilia, { familyName: 'Outro nome' });
+    expect(avisos.join(' ')).toContain('NOVO');
+  });
+
+  it('corta em 60 caracteres', () => {
+    const { payload } = montarClone(comFamilia, { familyName: 'A'.repeat(80) });
+    expect(payload.family_name).toHaveLength(60);
   });
 });

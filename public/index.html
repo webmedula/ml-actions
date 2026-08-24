@@ -176,18 +176,26 @@ async function carregarHistorico() {
 
 function fecharModal() { document.getElementById('modal').style.display = 'none'; sim = null; }
 
+function resimular() {
+  const v = document.getElementById('familyInput').value.trim();
+  if (ultimoItemId) simular(ultimoItemId, v);
+}
+
 function simularManual() {
   const v = document.getElementById('mlbInput').value.trim().toUpperCase();
   if (!v) return;
   simular(v);
 }
 
-async function simular(itemId) {
+let ultimoItemId = null;
+
+async function simular(itemId, familyName) {
+  ultimoItemId = itemId;
   document.getElementById('modal').style.display = 'flex';
   const b = document.getElementById('modalBody');
   b.innerHTML = '<div class="muted">Lendo o anúncio e pedindo ao Mercado Livre para validar o clone…</div>';
   try {
-    sim = await api('/api/listings/' + encodeURIComponent(itemId) + '/recreate/simulate', {});
+    sim = await api('/api/listings/' + encodeURIComponent(itemId) + '/recreate/simulate', familyName ? { familyName } : {});
     b.innerHTML = render(sim);
   } catch (e) {
     b.innerHTML = '<div class="insight bad">Não foi possível simular: ' + esc(e.message) + '</div>';
@@ -234,6 +242,21 @@ function render(s) {
 
   h += '<details style="margin-bottom:14px"><summary class="muted" style="cursor:pointer">Ver o payload que seria enviado</summary>' +
     '<pre style="max-height:220px;font-size:11px">' + esc(JSON.stringify(s.payload, null, 2)) + '</pre></details>';
+
+  // O family_name e a alavanca: mesmo nome tende a reagrupar no mesmo MLBU (nota vem junto),
+  // nome diferente tende a criar um agrupamento novo (nota zera). Quem confirma e a sondagem.
+  const igual = s.familyName === s.familyNameOriginal;
+  h += '<div class="panel" style="background:var(--panel-2);margin-bottom:12px">' +
+    '<div class="muted" style="margin-bottom:6px">Nome de família — é ele que decide o agrupamento das opiniões</div>' +
+    '<div class="row">' +
+      '<input id="familyInput" class="txt" style="flex:1;min-width:240px" value="' + esc(s.familyName || '') + '" />' +
+      '<button class="secondary" onclick="resimular()">Re-simular com este nome</button>' +
+    '</div>' +
+    '<div class="muted" style="margin-top:6px">' +
+      (igual
+        ? 'Igual ao original — o ML tende a reagrupar no mesmo produto do usuário, e a nota viria junto.'
+        : 'Diferente do original (<b>' + esc(s.familyNameOriginal || '—') + '</b>) — tende a criar um agrupamento novo, sem opiniões.') +
+    '</div></div>';
 
   h += '<div id="sondagemBox"></div>';
 

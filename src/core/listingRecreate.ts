@@ -44,6 +44,7 @@ const CAMPOS_ACEITOS = [
   'title', 'category_id', 'price', 'currency_id', 'buying_mode', 'listing_type_id',
   'condition', 'warranty', 'video_id', 'seller_custom_field', 'official_store_id',
   'channels', 'sale_terms', 'shipping', 'attributes', 'variations', 'pictures',
+  'family_name',
 ] as const;
 
 /** De `shipping`, so o que e configuravel. methods/free_methods/logistic_type sao derivados. */
@@ -94,6 +95,17 @@ export interface OpcoesClone {
   sufixoTitulo?: string;
   /** Quantidade com que o anuncio novo nasce. Comeca em 1 e so vira o estoque real na virada. */
   quantidadeInicial?: number;
+  /**
+   * NOME DA FAMILIA — o campo que decide o agrupamento das opinioes.
+   *
+   * O ML exige `family_name` no POST /items e o usa pra encaixar o anuncio num produto do usuario
+   * (MLBU...). Repetir o nome do original tende a cair no MESMO MLBU, e as opinioes vem junto;
+   * um nome diferente tende a criar um agrupamento novo, sem opinioes.
+   *
+   * "Tende a" porque quem decide e o ML, cruzando tambem marca, modelo e GTIN. Por isso o padrao
+   * aqui e FIEL (copia o do original) e quem confirma o efeito e a sondagem, nao esta suposicao.
+   */
+  familyName?: string;
 }
 
 export interface ResultadoClone {
@@ -130,6 +142,23 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
 
   const frete = limparShipping(item?.shipping);
   if (frete) payload.shipping = frete; else delete payload.shipping;
+
+  // family_name e obrigatorio no POST /items. Sem ele o ML recusa com body.required_fields.
+  const familia = (opts.familyName || '').trim() || item?.family_name || item?.title;
+  if (familia) {
+    payload.family_name = String(familia).slice(0, 60);
+    if (opts.familyName && opts.familyName.trim() && opts.familyName.trim() !== (item?.family_name || item?.title)) {
+      avisos.push(
+        `Nome de familia alterado para "${payload.family_name}". Isso tende a criar um produto do usuario NOVO — ` +
+        'que e o que zera as opinioes. A sondagem confirma se funcionou.',
+      );
+    } else {
+      avisos.push(
+        `Nome de familia mantido igual ao original ("${payload.family_name}"). O ML tende a reagrupar o anuncio novo ` +
+        'no MESMO produto do usuario, e nesse caso a nota vem junto. Se o objetivo e zerar, use um nome diferente.',
+      );
+    }
+  }
 
   const sufixo = (opts.sufixoTitulo || '').trim();
   if (sufixo) {
@@ -207,6 +236,9 @@ export interface Simulacao {
   avaliacoesParaRecuperar: number | null;
   catalogListing: boolean;
   catalogProductId: string | null;
+  /** Nome de familia que seria enviado — o campo que decide o agrupamento das opinioes. */
+  familyName: string | null;
+  familyNameOriginal: string | null;
   payload: Record<string, any>;
   avisos: string[];
   /** Resultado do POST /items/validate no ML. `bruto` traz a resposta crua quando ele recusa. */
@@ -297,6 +329,8 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     ),
     catalogListing: item.catalog_listing === true,
     catalogProductId: item.catalog_product_id ?? null,
+    familyName: payload.family_name ?? null,
+    familyNameOriginal: item.family_name ?? item.title ?? null,
     payload,
     avisos,
     validacao,
