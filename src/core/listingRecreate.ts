@@ -307,15 +307,36 @@ function novoToken(itemId: string): string {
 export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): Promise<Simulacao> {
   limparExpiradas();
 
-  const item = await getItemFull(itemId);
+  const id = String(itemId || '').trim().toUpperCase();
+  if (!/^ML[A-Z]\d+$/.test(id)) {
+    throw new RecriacaoBloqueada(
+      `"${itemId}" nao parece um id de anuncio. Informe o MLB do anuncio (ex: MLB4881096643) — nao a URL nem o id do produto.`,
+    );
+  }
+
+  // Unica chamada sem tratamento no fluxo: se o ML nao achar o anuncio, a mensagem dele e generica
+  // ("visita el Sitio de Desarrolladores"). Traduz pra algo que diga o que de fato aconteceu.
+  let item: any;
+  try {
+    item = await getItemFull(id);
+  } catch (err: any) {
+    if (err?.status === 404) {
+      throw new RecriacaoBloqueada(`O Mercado Livre nao encontrou o anuncio ${id}. Confira o id — ele precisa ser de um anuncio seu.`);
+    }
+    if (err?.status === 403) {
+      throw new RecriacaoBloqueada(`Sem permissao para ler o anuncio ${id}. Confira os escopos do aplicativo no Mercado Livre.`);
+    }
+    throw err;
+  }
+
   const { payload, avisos } = montarClone(item, opts);
   const validacao = await validateItemPayload(payload);
-  const rating = await getRating(itemId).catch(() => null);
-  const { userProductId: userProductIdOriginal } = await getUserProductId(itemId, item);
+  const rating = await getRating(id).catch(() => null);
+  const { userProductId: userProductIdOriginal } = await getUserProductId(id, item);
 
   const sim: Simulacao = {
-    token: novoToken(itemId),
-    itemId,
+    token: novoToken(id),
+    itemId: id,
     titulo: item.title,
     criadoEm: item.date_created,
     vendas: Number(item.sold_quantity || 0),
@@ -339,7 +360,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
   };
 
   simulacoes.set(sim.token, sim);
-  logger.info(`[RECRIAR] Simulacao ${sim.token} para ${itemId}: validacao ${validacao.ok ? 'OK' : 'FALHOU'}.`);
+  logger.info(`[RECRIAR] Simulacao ${sim.token} para ${id}: validacao ${validacao.ok ? 'OK' : 'FALHOU'}.`);
   return sim;
 }
 

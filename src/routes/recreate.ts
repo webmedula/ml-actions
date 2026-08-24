@@ -42,7 +42,7 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
       const sim = await simularRecriacao(itemId, { sufixoTitulo: body.sufixoTitulo, familyName: body.familyName });
       return { ...sim, escritaHabilitada: config.recreateEnabled };
     } catch (err: any) {
-      reply.code(err?.status === 404 ? 404 : 500);
+      reply.code(err instanceof RecriacaoBloqueada ? 400 : err?.status === 404 ? 404 : 500);
       return { mensagem: err?.message || 'Erro ao simular a recriacao' };
     }
   });

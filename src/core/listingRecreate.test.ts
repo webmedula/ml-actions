@@ -237,3 +237,17 @@ describe('family_name — a alavanca do agrupamento das opinioes', () => {
     expect(payload.family_name).toHaveLength(60);
   });
 });
+
+describe('validacao do id do anuncio', () => {
+  it('aceita ids de anuncio de qualquer site do ML', () => {
+    for (const id of ['MLB4881096643', 'MLA123', 'MLM99']) {
+      expect(/^ML[A-Z]\d+$/.test(id)).toBe(true);
+    }
+  });
+
+  it('rejeita produto de usuario, produto de catalogo com U, URL e vazio', () => {
+    for (const id of ['MLBU4275986047', 'https://mercadolivre.com.br/p/MLB19872191', '', 'abc']) {
+      expect(/^ML[A-Z]\d+$/.test(id)).toBe(false);
+    }
+  });
+});
