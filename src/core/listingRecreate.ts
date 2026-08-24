@@ -31,16 +31,63 @@ import {
 
 // --- 1. Montagem do clone (funcao PURA — e o que os testes cobrem) ---
 
-/** Campos que sao identidade/historico do anuncio velho e NAO podem ir pro novo. */
-const CAMPOS_PROIBIDOS = new Set([
-  'id', 'site_id', 'seller_id', 'permalink', 'thumbnail', 'secure_thumbnail',
-  'date_created', 'last_updated', 'start_time', 'stop_time', 'expiration_time',
-  'sold_quantity', 'initial_quantity', 'base_price', 'original_price',
-  'health', 'status', 'sub_status', 'catalog_listing', 'catalog_product_id',
-  'parent_item_id', 'differential_pricing', 'seller_contact', 'location',
-  'geolocation', 'international_delivery_mode', 'automatic_relist', 'visits',
-  'listing_source', 'coverage_areas', 'descriptions', 'deal_ids', 'tags',
-]);
+/**
+ * Campos que o POST /items aceita. LISTA DE INCLUSAO, de proposito.
+ *
+ * A primeira versao usava lista de EXCLUSAO (copia tudo menos alguns proibidos) e o ML rejeitou o
+ * clone com "body.invalid_fields". A resposta de GET /items traz dezenas de campos derivados e
+ * somente-leitura — domain_id, internal_tags, seller_address, accepts_mercadopago, shipping.methods
+ * — e lista de exclusao sempre deixa passar o que nao foi previsto. Aqui e o contrario: nada entra
+ * no payload sem estar nesta lista.
+ */
+const CAMPOS_ACEITOS = [
+  'title', 'category_id', 'price', 'currency_id', 'buying_mode', 'listing_type_id',
+  'condition', 'warranty', 'video_id', 'seller_custom_field', 'official_store_id',
+  'channels', 'sale_terms', 'shipping', 'attributes', 'variations', 'pictures',
+] as const;
+
+/** De `shipping`, so o que e configuravel. methods/free_methods/logistic_type sao derivados. */
+const SHIPPING_ACEITO = ['mode', 'local_pick_up', 'free_shipping', 'dimensions'] as const;
+
+/** Atributos e sale_terms: o ML quer o id e o valor. O resto (name, value_type, grupos) e enfeite. */
+function limparAtributos(lista: any): any[] | undefined {
+  if (!Array.isArray(lista)) return undefined;
+  const limpos = lista
+    .filter((a: any) => a?.id)
+    .map((a: any) => {
+      const out: Record<string, any> = { id: a.id };
+      if (a.value_id != null) out.value_id = a.value_id;
+      else if (a.value_name != null) out.value_name = a.value_name;
+      if (a.value_struct != null) out.value_struct = a.value_struct;
+      return out;
+    });
+  return limpos.length ? limpos : undefined;
+}
+
+function limparShipping(shipping: any): Record<string, any> | undefined {
+  if (!shipping || typeof shipping !== 'object') return undefined;
+  const out: Record<string, any> = {};
+  for (const campo of SHIPPING_ACEITO) {
+    if (shipping[campo] !== undefined && shipping[campo] !== null) out[campo] = shipping[campo];
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Variacao nova: sem id do anuncio velho, sem estoque dele, sem vendas. */
+function limparVariacoes(variacoes: any): any[] | undefined {
+  if (!Array.isArray(variacoes) || variacoes.length === 0) return undefined;
+  return variacoes.map((v: any) => {
+    const out: Record<string, any> = { available_quantity: 1 };
+    if (v?.price != null) out.price = v.price;
+    if (Array.isArray(v?.picture_ids) && v.picture_ids.length) out.picture_ids = v.picture_ids;
+    if (v?.seller_custom_field != null) out.seller_custom_field = v.seller_custom_field;
+    const comb = limparAtributos(v?.attribute_combinations);
+    if (comb) out.attribute_combinations = comb;
+    const attrs = limparAtributos(v?.attributes);
+    if (attrs) out.attributes = attrs;
+    return out;
+  });
+}
 
 export interface OpcoesClone {
   /** Sufixo opcional no titulo. Vazio = titulo identico ao original. */
@@ -68,11 +115,21 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
   const avisos: string[] = [];
 
   const payload: Record<string, any> = {};
-  for (const [chave, valor] of Object.entries(item || {})) {
-    if (CAMPOS_PROIBIDOS.has(chave)) continue;
+  for (const chave of CAMPOS_ACEITOS) {
+    const valor = (item || {})[chave];
     if (valor === null || valor === undefined) continue;
     payload[chave] = valor;
   }
+
+  // Os tres campos abaixo precisam ser reescritos, nao copiados como vieram.
+  const attrs = limparAtributos(item?.attributes);
+  if (attrs) payload.attributes = attrs; else delete payload.attributes;
+
+  const terms = limparAtributos(item?.sale_terms);
+  if (terms) payload.sale_terms = terms; else delete payload.sale_terms;
+
+  const frete = limparShipping(item?.shipping);
+  if (frete) payload.shipping = frete; else delete payload.shipping;
 
   const sufixo = (opts.sufixoTitulo || '').trim();
   if (sufixo) {
@@ -100,15 +157,15 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
   payload.available_quantity = opts.quantidadeInicial ?? 1;
   payload.status = 'paused';
 
-  // Variacoes carregam estoque proprio e ids do anuncio velho: limpa os ids e zera o estoque.
-  if (Array.isArray(item.variations) && item.variations.length > 0) {
-    payload.variations = item.variations.map((v: any) => {
-      const { id, catalog_product_id, sold_quantity, ...resto } = v || {};
-      return { ...resto, available_quantity: 1 };
-    });
+  // Variacoes: ids e estoque do anuncio velho nao vao junto.
+  const vars = limparVariacoes(item?.variations);
+  if (vars) {
+    payload.variations = vars;
     avisos.push(
-      `O anuncio tem ${item.variations.length} variacao(oes). O estoque de cada uma comeca em 1 e precisa ser ajustado depois da virada.`,
+      `O anuncio tem ${vars.length} variacao(oes). O estoque de cada uma comeca em 1 e precisa ser ajustado depois da virada.`,
     );
+  } else {
+    delete payload.variations;
   }
 
   if (item.catalog_listing === true) {
@@ -152,8 +209,8 @@ export interface Simulacao {
   catalogProductId: string | null;
   payload: Record<string, any>;
   avisos: string[];
-  /** Resultado do POST /items/validate no ML. */
-  validacao: { ok: boolean; erros: string[] };
+  /** Resultado do POST /items/validate no ML. `bruto` traz a resposta crua quando ele recusa. */
+  validacao: { ok: boolean; erros: string[]; bruto?: unknown };
   /** Produto do usuario do anuncio ORIGINAL — a sondagem compara o do clone com este. */
   userProductIdOriginal: string | null;
   simuladoEm: string;

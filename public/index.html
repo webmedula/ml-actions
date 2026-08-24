@@ -224,7 +224,10 @@ function render(s) {
 
   if (!s.validacao.ok) {
     h += '<div class="insight bad" style="margin-bottom:12px">❌ O Mercado Livre <b>rejeitou</b> o clone na validação:<ul style="margin:6px 0 0 18px">' +
-      s.validacao.erros.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>Corrija o anúncio original antes de recriar.</div>';
+      s.validacao.erros.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>' +
+      (s.validacao.bruto ? '<details style="margin-top:8px"><summary style="cursor:pointer">Resposta crua do Mercado Livre</summary>' +
+        '<pre style="max-height:200px;font-size:11px">' + esc(JSON.stringify(s.validacao.bruto, null, 2)) + '</pre></details>' : '') +
+      '</div>';
   } else {
     h += '<div class="muted" style="margin-bottom:12px">✅ O Mercado Livre validou o clone. Nada foi criado ainda.</div>';
   }

@@ -21,8 +21,21 @@ const itemBase = {
   catalog_product_id: null,
   pictures: [{ id: 'PIC1', url: 'http://x/1.jpg' }, { id: 'PIC2', url: 'http://x/2.jpg' }],
   attributes: [{ id: 'BRAND', value_name: 'Generica' }],
-  shipping: { mode: 'me2', free_shipping: true },
+  shipping: {
+    mode: 'me2', free_shipping: true, local_pick_up: false,
+    dimensions: '10x10x5,300',
+    // derivados do ML — o clone NAO pode reenviar nenhum destes
+    methods: [{ id: 1 }], free_methods: [{ id: 73328 }], logistic_type: 'cross_docking',
+    store_pick_up: false, tags: ['self_service_in'],
+  },
   warranty: '3 meses',
+  // campos somente-leitura que vinham junto e faziam o ML recusar com body.invalid_fields
+  domain_id: 'MLB-SWITCHES',
+  internal_tags: ['SELF_SERVICE_IN'],
+  seller_address: { city: { name: 'Curitiba' } },
+  accepts_mercadopago: true,
+  automatic_relist: false,
+  thumbnail_id: 'ABC',
 };
 
 describe('montarClone', () => {
@@ -33,15 +46,51 @@ describe('montarClone', () => {
     }
   });
 
+  it('descarta os campos somente-leitura que causavam body.invalid_fields', () => {
+    const { payload } = montarClone(itemBase);
+    for (const derivado of ['domain_id', 'internal_tags', 'seller_address', 'accepts_mercadopago', 'automatic_relist', 'thumbnail_id']) {
+      expect(payload).not.toHaveProperty(derivado);
+    }
+  });
+
+  it('so envia campos que o POST /items aceita', () => {
+    const { payload } = montarClone(itemBase);
+    const aceitos = new Set([
+      'title', 'category_id', 'price', 'currency_id', 'buying_mode', 'listing_type_id',
+      'condition', 'warranty', 'video_id', 'seller_custom_field', 'official_store_id',
+      'channels', 'sale_terms', 'shipping', 'attributes', 'variations', 'pictures',
+      'available_quantity', 'status',
+    ]);
+    for (const chave of Object.keys(payload)) expect(aceitos.has(chave)).toBe(true);
+  });
+
+  it('limpa o shipping, mantendo so o que e configuravel', () => {
+    const { payload } = montarClone(itemBase);
+    expect(payload.shipping).toEqual({ mode: 'me2', local_pick_up: false, free_shipping: true, dimensions: '10x10x5,300' });
+  });
+
+  it('reduz atributos a id + valor', () => {
+    const { payload } = montarClone({
+      ...itemBase,
+      attributes: [{ id: 'BRAND', name: 'Marca', value_id: '123', value_name: 'Generica', value_type: 'string', attribute_group_id: 'OTHERS' }],
+    });
+    expect(payload.attributes).toEqual([{ id: 'BRAND', value_id: '123' }]);
+  });
+
+  it('usa value_name quando nao ha value_id', () => {
+    const { payload } = montarClone({ ...itemBase, attributes: [{ id: 'MODEL', value_name: 'SF-510' }] });
+    expect(payload.attributes).toEqual([{ id: 'MODEL', value_name: 'SF-510' }]);
+  });
+
   it('preserva o que define o anuncio', () => {
     const { payload } = montarClone(itemBase);
     expect(payload.title).toBe(itemBase.title);
     expect(payload.category_id).toBe('MLB1234');
     expect(payload.price).toBe(39.9);
     expect(payload.listing_type_id).toBe('gold_special');
-    expect(payload.shipping).toEqual(itemBase.shipping);
-    expect(payload.attributes).toEqual(itemBase.attributes);
     expect(payload.warranty).toBe('3 meses');
+    expect(payload.condition).toBe('new');
+    expect(payload.currency_id).toBe('BRL');
   });
 
   it('reaproveita as fotos por id, sem re-upload', () => {
@@ -73,11 +122,20 @@ describe('montarClone', () => {
   it('limpa ids e estoque das variacoes', () => {
     const { payload, avisos } = montarClone({
       ...itemBase,
-      variations: [{ id: 555, sold_quantity: 10, available_quantity: 7, attribute_combinations: [{ id: 'COLOR' }] }],
+      variations: [{
+        id: 555, sold_quantity: 10, available_quantity: 7, price: 41.9,
+        attribute_combinations: [{ id: 'COLOR', value_id: '52049', value_name: 'Preto', value_type: 'string' }],
+        picture_ids: ['PIC1'], catalog_product_id: 'MLB999',
+      }],
     });
-    expect(payload.variations[0]).not.toHaveProperty('id');
-    expect(payload.variations[0]).not.toHaveProperty('sold_quantity');
-    expect(payload.variations[0].available_quantity).toBe(1);
+    const v = payload.variations[0];
+    expect(v).not.toHaveProperty('id');
+    expect(v).not.toHaveProperty('sold_quantity');
+    expect(v).not.toHaveProperty('catalog_product_id');
+    expect(v.available_quantity).toBe(1);
+    expect(v.price).toBe(41.9);
+    expect(v.picture_ids).toEqual(['PIC1']);
+    expect(v.attribute_combinations).toEqual([{ id: 'COLOR', value_id: '52049' }]);
     expect(avisos.join(' ')).toContain('variacao');
   });
 

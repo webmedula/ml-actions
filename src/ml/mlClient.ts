@@ -11,22 +11,46 @@ export class MlApiError extends Error {
   status: number;
   /** Lista `cause` que o ML devolve em erros de validacao de anuncio ("falta o atributo X"). */
   causas: string[];
-  constructor(status: number, message: string, causas: string[] = []) {
+  /** Corpo cru da resposta de erro. Guardado porque o ML as vezes so diz "body.invalid_fields"
+   * na mensagem e o detalhe util esta em outro lugar do JSON. */
+  corpo: unknown;
+  constructor(status: number, message: string, causas: string[] = [], corpo?: unknown) {
     super(message);
     this.name = 'MlApiError';
     this.status = status;
     this.causas = causas;
+    this.corpo = corpo;
   }
 }
 
-/** O ML devolve `cause` ora como array de strings, ora como array de objetos {code, message}. */
+/**
+ * O ML devolve `cause` ora como array de strings, ora como objetos {code, message}, e as vezes
+ * aninhado em `cause[].causes`. Junta code E message quando os dois existem: so o code
+ * ("body.invalid_fields") nao diz qual campo esta errado, e so a message as vezes vem vazia.
+ */
 function extrairCausas(data: any): string[] {
-  const bruto = data?.cause;
-  if (!bruto) return [];
-  const lista = Array.isArray(bruto) ? bruto : [bruto];
-  return lista
-    .map((c: any) => (typeof c === 'string' ? c : c?.message || c?.code || JSON.stringify(c)))
-    .filter(Boolean);
+  const out: string[] = [];
+
+  const visitar = (c: any): void => {
+    if (!c) return;
+    if (typeof c === 'string') {
+      out.push(c);
+      return;
+    }
+    if (Array.isArray(c)) {
+      c.forEach(visitar);
+      return;
+    }
+    const partes = [c.code, c.message].filter((p: any) => typeof p === 'string' && p.trim());
+    const texto = Array.from(new Set(partes)).join(': ');
+    if (texto) out.push(texto);
+    if (c.causes) visitar(c.causes);
+    if (c.cause) visitar(c.cause);
+  };
+
+  visitar(data?.cause);
+  visitar(data?.causes);
+  return out;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -91,7 +115,7 @@ async function mlRequest<T>(path: string, opts: MlRequestOpts = {}): Promise<T> 
     const data = text ? JSON.parse(text) : undefined;
 
     if (!res.ok) {
-      throw new MlApiError(res.status, data?.message || `Erro HTTP ${res.status}`, extrairCausas(data));
+      throw new MlApiError(res.status, data?.message || `Erro HTTP ${res.status}`, extrairCausas(data), data);
     }
 
     return data as T;
@@ -160,13 +184,16 @@ export async function getRating(id: string): Promise<MlRating | null> {
 // --- ESCRITA (tudo abaixo altera dados reais da conta) ---
 
 /** Valida um payload de anuncio SEM criar nada. E a rede de seguranca da simulacao. */
-export async function validateItemPayload(payload: unknown): Promise<{ ok: boolean; erros: string[] }> {
+export async function validateItemPayload(payload: unknown): Promise<{ ok: boolean; erros: string[]; bruto?: unknown }> {
   try {
     await mlRequest<any>('/items/validate', { method: 'POST', body: payload });
     return { ok: true, erros: [] };
   } catch (err: any) {
     if (err instanceof MlApiError) {
-      return { ok: false, erros: err.causas.length ? err.causas : [err.message] };
+      // Sempre devolve o corpo cru junto: quando o ML responde so "body.invalid_fields", e o unico
+      // lugar onde da pra descobrir qual campo ele recusou.
+      const erros = err.causas.length ? err.causas : [err.message];
+      return { ok: false, erros, bruto: err.corpo };
     }
     return { ok: false, erros: [String(err?.message || err)] };
   }
