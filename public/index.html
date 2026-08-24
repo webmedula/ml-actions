@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ações no Mercado Livre · ml-actions</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --panel-2: #23262e; --border: #2e323c;
+    --text: #e8e9ec; --text-dim: #9a9fab; --accent: #3b82f6; --accent-2: #2563eb;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; gap: 10px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .panel h2 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-2); }
+  button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--red); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--text-dim); font-size: 12px; }
+  a { color: var(--accent); text-decoration: none; }
+  .insight { background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.3); border-radius: 10px; padding: 14px 16px; font-size: 14px; color: #cfe0ff; line-height: 1.5; }
+  .insight.warn { background: rgba(234,179,8,.12); border-color: rgba(234,179,8,.35); color: #f5e6b0; }
+  .insight.bad { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35); color: #ffcfcf; }
+  .flag { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .flag.on { background: rgba(239,68,68,.18); color: #ff9b9b; }
+  .flag.off { background: rgba(34,197,94,.15); color: var(--green); }
+  input.txt { padding: 9px 12px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; }
+  pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; }
+  .title-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 50; align-items: center; justify-content: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Ações no Mercado Livre <span class="muted" id="versao"></span></h1>
+  <div class="row">
+    <span id="flagEscrita"></span>
+    <button class="secondary" onclick="carregar()">Atualizar</button>
+    <button class="secondary" onclick="toggleKey()">🔑 Chave</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="keyPanel" style="display:none">
+    <h2>Chave de acesso</h2>
+    <p class="muted">Este serviço escreve no Mercado Livre. Cole a <code>SERVICE_API_KEY</code> para liberar as ações. Ela fica guardada só neste navegador.</p>
+    <div class="row">
+      <input id="keyInput" class="txt" type="password" placeholder="cole a SERVICE_API_KEY" style="flex:1;min-width:260px" />
+      <button onclick="salvarKey()">Salvar</button>
+      <button class="secondary" onclick="limparKey()">Limpar</button>
+    </div>
+  </section>
+
+  <section class="panel" id="connectPanel" style="display:none">
+    <h2>Conectar ao Mercado Livre</h2>
+    <p class="muted">Este serviço usa um aplicativo do ML <b>separado</b> do ml-analytics. Autorize uma vez.</p>
+    <a href="/oauth/ml/login"><button>Conectar ao Mercado Livre</button></a>
+  </section>
+
+  <section class="panel">
+    <h2>Recriar um anúncio</h2>
+    <p class="muted" style="margin-top:0">Informe o MLB ou escolha um candidato abaixo. O botão só <b>simula</b> — nada é alterado até você confirmar na tela seguinte.</p>
+    <div class="row">
+      <input id="mlbInput" class="txt" placeholder="MLB4881096643" style="min-width:220px" />
+      <button onclick="simularManual()">Simular recriação</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Candidatos (via ml-analytics)</h2>
+    <div id="candidatos"><div class="muted">Carregando…</div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Histórico</h2>
+    <div id="historico"><div class="muted">Carregando…</div></div>
+  </section>
+</main>
+
+<div id="modal">
+  <div class="panel" style="max-width:700px;width:100%;max-height:88vh;overflow:auto">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">Recriar anúncio</h2>
+      <button class="secondary" onclick="fecharModal()">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+let sim = null;
+let status = null;
+
+function key() { return localStorage.getItem('ml_actions_key') || ''; }
+function toggleKey() { const p = document.getElementById('keyPanel'); const a = p.style.display === 'none'; p.style.display = a ? '' : 'none'; if (a) document.getElementById('keyInput').value = key(); }
+function salvarKey() { localStorage.setItem('ml_actions_key', document.getElementById('keyInput').value.trim()); location.reload(); }
+function limparKey() { localStorage.removeItem('ml_actions_key'); location.reload(); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function hora(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
+
+async function api(path, body) {
+  const headers = {};
+  if (key()) headers['x-api-key'] = key();
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, body ? { method: 'POST', headers, body: JSON.stringify(body) } : { headers });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok && res.status !== 207) { const e = new Error(d.mensagem || ('HTTP ' + res.status)); e.status = res.status; throw e; }
+  return d;
+}
+
+async function carregar() {
+  try {
+    status = await api('/api/status');
+    document.getElementById('versao').textContent = status.versao;
+    document.getElementById('flagEscrita').innerHTML = status.escritaHabilitada
+      ? '<span class="flag on">ESCRITA LIGADA</span>'
+      : '<span class="flag off">somente simulação</span>';
+    document.getElementById('connectPanel').style.display = status.mlAutenticado ? 'none' : '';
+  } catch (e) {
+    document.getElementById('flagEscrita').innerHTML = '<span class="muted">' + esc(e.message) + '</span>';
+    if (e.status === 401) document.getElementById('keyPanel').style.display = '';
+    return;
+  }
+  carregarCandidatos();
+  carregarHistorico();
+}
+
+async function carregarCandidatos() {
+  const el = document.getElementById('candidatos');
+  try {
+    const d = await api('/api/candidates');
+    if (!d.disponivel) { el.innerHTML = '<div class="insight warn">' + esc(d.motivo || 'Lista indisponível.') + '</div>'; return; }
+    if (!d.items.length) { el.innerHTML = '<div class="muted">Nenhum anúncio classificado como recriável no momento.</div>'; return; }
+    el.innerHTML = '<div class="muted">Diagnóstico de ' + hora(d.atualizadoEm) + ' · ' + d.items.length + ' candidato(s).</div>' +
+      '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th><th class="num">Vendidos</th><th></th></tr></thead><tbody>' +
+      d.items.map(i => '<tr>' +
+        '<td class="title-cell">' + (i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId)) +
+          '<div class="muted">' + esc(i.itemId) + ' · ' + esc(i.classificacao) + '</div></td>' +
+        '<td class="num">' + (i.nota == null ? '—' : i.nota.toFixed(1).replace('.', ',') + ' ★') + '</td>' +
+        '<td class="num">' + (i.totalAvaliacoes == null ? '—' : i.totalAvaliacoes) + '</td>' +
+        '<td class="num">' + (i.vendidos == null ? '—' : i.vendidos) + '</td>' +
+        '<td class="num"><button class="secondary" onclick="simular(\'' + i.itemId + '\')">Simular…</button></td>' +
+        '</tr>').join('') + '</tbody></table>';
+  } catch (e) {
+    el.innerHTML = '<div class="insight bad">' + esc(e.message) + '</div>';
+  }
+}
+
+async function carregarHistorico() {
+  const el = document.getElementById('historico');
+  try {
+    const d = await api('/api/listings/recreations');
+    if (!d.items.length) { el.innerHTML = '<div class="muted">Nenhuma recriação executada ainda.</div>'; return; }
+    el.innerHTML = '<table><thead><tr><th>Quando</th><th>Antigo</th><th>Novo</th><th>Situação</th></tr></thead><tbody>' +
+      d.items.map(r => '<tr>' +
+        '<td>' + hora(r.executadoEm) + '<div class="muted">' + esc(r.titulo || '') + '</div></td>' +
+        '<td>' + esc(r.itemAntigo) + '<div class="muted">' + r.vendasPerdidas + ' venda(s) deixadas para trás</div></td>' +
+        '<td>' + esc(r.itemNovo || '—') + '</td>' +
+        '<td>' + esc(r.status) + (r.erro ? '<div class="muted">' + esc(r.etapaQueFalhou || '') + ': ' + esc(r.erro) + '</div>' : '') + '</td>' +
+        '</tr>').join('') + '</tbody></table>';
+  } catch (e) {
+    el.innerHTML = '<div class="insight bad">' + esc(e.message) + '</div>';
+  }
+}
+
+function fecharModal() { document.getElementById('modal').style.display = 'none'; sim = null; }
+
+function simularManual() {
+  const v = document.getElementById('mlbInput').value.trim().toUpperCase();
+  if (!v) return;
+  simular(v);
+}
+
+async function simular(itemId) {
+  document.getElementById('modal').style.display = 'flex';
+  const b = document.getElementById('modalBody');
+  b.innerHTML = '<div class="muted">Lendo o anúncio e pedindo ao Mercado Livre para validar o clone…</div>';
+  try {
+    sim = await api('/api/listings/' + encodeURIComponent(itemId) + '/recreate/simulate', {});
+    b.innerHTML = render(sim);
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">Não foi possível simular: ' + esc(e.message) + '</div>';
+  }
+}
+
+function render(s) {
+  let h = '<h3 style="margin:0 0 2px">' + esc(s.titulo) + '</h3><div class="muted" style="margin-bottom:14px">' + esc(s.itemId) + '</div>';
+
+  h += '<table style="margin-bottom:14px"><tbody>' +
+    '<tr><td>Nota atual</td><td class="num"><b>' + (s.nota == null ? '—' : s.nota.toFixed(1).replace('.', ',') + ' ★') + '</b> em ' + (s.totalAvaliacoes == null ? '—' : s.totalAvaliacoes) + ' opinião(ões)</td></tr>' +
+    '<tr><td>Vendas que o anúncio novo <b>não</b> herda</td><td class="num"><b>' + s.vendas + '</b></td></tr>' +
+    '<tr><td>Estoque a transferir</td><td class="num">' + s.estoqueAtual + '</td></tr>' +
+    '</tbody></table>';
+
+  // O contraponto honesto, antes do botão: quantas notas 5 resolveriam sem jogar o histórico fora.
+  if (s.avaliacoesParaRecuperar != null) {
+    const n = s.avaliacoesParaRecuperar;
+    h += '<div class="insight ' + (n <= 2 ? 'warn' : '') + '" style="margin-bottom:12px">' +
+      (n <= 2
+        ? '💡 <b>' + n + ' avaliação(ões) 5 estrelas</b> já levariam este anúncio de volta ao limite — sem perder as ' + s.vendas + ' vendas. Recriar aqui provavelmente custa mais do que resolve.'
+        : 'Para recuperar a nota organicamente seriam necessárias <b>' + n + ' avaliações 5 estrelas seguidas</b>.') +
+      '</div>';
+  }
+
+  if (s.catalogListing || s.catalogProductId) {
+    h += '<div class="insight warn" style="margin-bottom:12px">⚠️ Anúncio vinculado ao produto <b>' + esc(s.catalogProductId || '—') + '</b>. Se a opinião mora no produto, o anúncio novo nasce com a mesma nota.</div>';
+  }
+
+  if (s.avisos && s.avisos.length) {
+    h += '<div style="margin-bottom:12px"><b>Antes de confirmar:</b><ul style="margin:6px 0 0 18px;font-size:13px;line-height:1.6">' +
+      s.avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul></div>';
+  }
+
+  if (!s.validacao.ok) {
+    h += '<div class="insight bad" style="margin-bottom:12px">❌ O Mercado Livre <b>rejeitou</b> o clone na validação:<ul style="margin:6px 0 0 18px">' +
+      s.validacao.erros.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>Corrija o anúncio original antes de recriar.</div>';
+  } else {
+    h += '<div class="muted" style="margin-bottom:12px">✅ O Mercado Livre validou o clone. Nada foi criado ainda.</div>';
+  }
+
+  h += '<details style="margin-bottom:14px"><summary class="muted" style="cursor:pointer">Ver o payload que seria enviado</summary>' +
+    '<pre style="max-height:220px;font-size:11px">' + esc(JSON.stringify(s.payload, null, 2)) + '</pre></details>';
+
+  h += '<div id="sondagemBox"></div>';
+
+  h += '<div class="row" id="acoesSondagem" style="justify-content:flex-end"><button class="secondary" onclick="fecharModal()">Cancelar</button>';
+  if (!s.escritaHabilitada) {
+    h += '<span class="muted">Escrita desligada neste serviço (<code>RECREATE_ENABLED</code>).</span>';
+  } else if (s.validacao.ok) {
+    // A sondagem vem ANTES do botão de recriar: ela é o que transforma a aposta em decisão.
+    h += '<button onclick="sondar()">Sondar antes (recomendado)</button>' +
+      '<button class="danger" onclick="executar()">Recriar sem sondar</button>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// --- sondagem: cria o clone pausado só pra ler o produto do usuário dele ---
+async function sondar() {
+  const box = document.getElementById('sondagemBox');
+  box.innerHTML = '<div class="muted" style="margin-bottom:12px">Criando um anúncio de teste pausado e lendo o produto do usuário que o ML deu a ele…</div>';
+  try {
+    const r = await api('/api/listings/recreate/probe', { token: sim.token });
+    sim.sondagem = r;
+    const classe = r.veredicto === 'zera' ? 'insight' : (r.veredicto === 'nao_zera' ? 'insight bad' : 'insight warn');
+    const icone = r.veredicto === 'zera' ? '✅' : (r.veredicto === 'nao_zera' ? '🛑' : '❓');
+
+    box.innerHTML = '<div class="' + classe + '" style="margin-bottom:12px">' + icone + ' ' + esc(r.explicacao) +
+      '<div class="muted" style="margin-top:8px">Original: <b>' + esc(r.userProductIdOriginal || '—') + '</b> · ' +
+      'Teste (' + esc(r.itemNovo) + '): <b>' + esc(r.userProductIdNovo || '—') + '</b> · fonte: ' + esc(r.fonte) + '</div></div>';
+
+    const acoes = document.getElementById('acoesSondagem');
+    if (acoes) {
+      acoes.innerHTML = r.veredicto === 'zera'
+        ? '<button class="secondary" onclick="descartar()">Descartar teste</button>' +
+          '<button class="danger" onclick="executar()">Seguir: virar para o anúncio novo</button>'
+        : '<button class="danger" onclick="descartar()">Descartar anúncio de teste</button>';
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="insight bad" style="margin-bottom:12px">Não foi possível sondar: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function descartar() {
+  const box = document.getElementById('sondagemBox');
+  try {
+    const r = await api('/api/listings/recreate/discard', { token: sim.token });
+    box.innerHTML = '<div class="insight" style="margin-bottom:12px">Anúncio de teste ' + esc(r.descartado) + ' fechado' +
+      (r.apagado ? ' e apagado' : '') + '. Seu anúncio original não foi tocado.</div>';
+    const acoes = document.getElementById('acoesSondagem');
+    if (acoes) acoes.innerHTML = '<button onclick="fecharModal();carregar()">Fechar</button>';
+  } catch (e) {
+    box.innerHTML = '<div class="insight bad" style="margin-bottom:12px">Falha ao descartar: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function executar() {
+  if (!sim) return;
+  const b = document.getElementById('modalBody');
+  b.innerHTML = '<div class="muted">Criando o anúncio novo, transferindo o estoque e fechando o antigo…</div>';
+  try {
+    const r = await api('/api/listings/recreate/execute', { token: sim.token, confirmacao: 'RECRIAR' });
+    b.innerHTML = (r.status === 'sucesso'
+      ? '<div class="insight">✅ Pronto. Anúncio novo: <b>' + esc(r.itemNovo) + '</b>. O antigo (' + esc(r.itemAntigo) + ') foi fechado.<br><br>' +
+        '<b>Falta um passo fora daqui:</b> atualizar o vínculo desse SKU no Tiny para o MLB novo, senão estoque, preço e nota fiscal param de sincronizar.</div>'
+      : '<div class="insight bad">⚠️ Parou em "<b>' + esc(r.etapaQueFalhou || '—') + '</b>": ' + esc(r.erro || '') + '<br><br>Anúncio novo: <b>' + esc(r.itemNovo || 'não criado') + '</b> · antigo: <b>' + esc(r.itemAntigo) + '</b>. Confira os dois no Mercado Livre — o serviço não desfaz nada sozinho.</div>')
+      + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="fecharModal();carregar()">Fechar</button></div>';
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">Falhou: ' + esc(e.message) + '</div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:12px"><button class="secondary" onclick="fecharModal()">Fechar</button></div>';
+  }
+}
+
+carregar();
+</script>
+</body>
+</html>
