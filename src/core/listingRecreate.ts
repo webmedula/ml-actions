@@ -743,11 +743,37 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
   }
 
   const aceitas = testadas.filter((t) => t.ok);
-  const veredicto = aceitas.length === 0
-    ? 'O ML recusou TODAS as formas. Este anuncio nao e recriavel por clone: as regras da categoria mudaram desde que ele foi criado. Veja os erros de cada forma pra saber o que falta.'
-    : aceitas.some((t) => t.forma === 'como_esta')
+
+  /**
+   * Mensagem que aparece em TODAS as formas nao vem do payload.
+   *
+   * Cada forma manda um corpo diferente. Se a mensagem nao muda quando o corpo muda, a causa esta
+   * fora do que controlamos — na conta, na categoria ou no tipo de anuncio. Distinguir isso importa:
+   * sem essa separacao eu dei um veredicto de "nao e recriavel" com base em duas mensagens que
+   * provavelmente eram avisos, e mandei o usuario atras de tres versoes de correcao inutil.
+   */
+  const invariantes = testadas.length > 1
+    ? testadas[0].erros.filter((e) => testadas.every((t) => t.erros.includes(e)))
+    : [];
+  const variaveis = (t: FormaTestada) => t.erros.filter((e) => !invariantes.includes(e));
+  const semErroProprio = testadas.filter((t) => !t.ok && variaveis(t).length === 0);
+
+  let veredicto: string;
+  if (aceitas.length > 0) {
+    veredicto = aceitas.some((t) => t.forma === 'como_esta')
       ? 'O formato original passa. O erro anterior veio de outra coisa — compare os erros abaixo.'
       : `O ML aceita: ${aceitas.map((t) => t.forma).join(', ')}. A recriacao e possivel, mas mudando a forma do anuncio — leia a descricao antes de decidir se o resultado ainda e o anuncio que voce quer.`;
+  } else if (semErroProprio.length > 0) {
+    veredicto =
+      `Nenhuma forma passou limpa, MAS ${semErroProprio.map((t) => t.forma).join(', ')} so recebeu mensagem que ` +
+      'aparece em todas as formas — ou seja, que nao vem do que a gente manda. Isso costuma ser aviso da conta ou ' +
+      'da categoria, e nao impedimento. Nao da pra confirmar sem criar de verdade: use a sondagem, que cria um ' +
+      'anuncio pausado com estoque 1 e descarta em seguida.';
+  } else {
+    veredicto =
+      'Todas as formas foram recusadas por motivos que mudam conforme o payload. Este anuncio nao e recriavel por ' +
+      'clone hoje: as regras da categoria mudaram desde que ele foi criado.';
+  }
 
   return {
     itemId,
@@ -755,7 +781,9 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
     temVariacoes: Array.isArray(item?.variations) ? item.variations.length : 0,
     familyNameOriginal: item?.family_name ?? null,
     veredicto,
-    formas: testadas,
+    /** Mensagens iguais em todas as formas: nao sao causadas pelo corpo enviado. */
+    mensagensQueNaoDependemDoPayload: invariantes,
+    formas: testadas.map((t) => ({ ...t, errosProprios: variaveis(t) })),
     aviso: 'Nenhum anuncio foi criado. /items/validate apenas valida.',
   };
 }
