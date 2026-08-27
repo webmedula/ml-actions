@@ -57,11 +57,26 @@ const CAMPOS_ACEITOS = [
  */
 const SHIPPING_ACEITO = ['local_pick_up', 'free_shipping', 'dimensions'] as const;
 
+/**
+ * Atributos que o ML calcula e nao aceita receber. Mandar rende
+ * "ignored because it is not modifiable" — as vezes so ruido, as vezes recusa.
+ */
+const ATRIBUTOS_SOMENTE_LEITURA = new Set(['PRODUCT_FEATURES']);
+
+/**
+ * Modalidade de envio do anuncio NOVO.
+ *
+ * Nao basta parar de copiar o `mode` antigo: sem o campo, o ML infere — e num anuncio de categoria
+ * velha ele infere `me1`, modalidade que a conta nao tem mais ("User has not mode me1"). Entao o
+ * clone declara a modalidade vigente em vez de deixar o ML adivinhar a partir do passado.
+ */
+const MODO_DE_ENVIO_PADRAO = 'me2';
+
 /** Atributos e sale_terms: o ML quer o id e o valor. O resto (name, value_type, grupos) e enfeite. */
 function limparAtributos(lista: any): any[] | undefined {
   if (!Array.isArray(lista)) return undefined;
   const limpos = lista
-    .filter((a: any) => a?.id)
+    .filter((a: any) => a?.id && !ATRIBUTOS_SOMENTE_LEITURA.has(a.id))
     .map((a: any) => {
       const out: Record<string, any> = { id: a.id };
       if (a.value_id != null) out.value_id = a.value_id;
@@ -113,6 +128,10 @@ export interface OpcoesClone {
    * aqui e FIEL (copia o do original) e quem confirma o efeito e a sondagem, nao esta suposicao.
    */
   familyName?: string;
+  /**
+   * Modalidade de envio do anuncio novo. Vazio = 'me2'. 'nenhum' omite o campo.
+   */
+  modoDeEnvio?: string;
   /**
    * Forcar frete gratis no anuncio novo.
    *
@@ -167,6 +186,11 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
 
   const frete = limparShipping(item?.shipping);
   if (frete) payload.shipping = frete; else delete payload.shipping;
+
+  const modo = (opts.modoDeEnvio || '').trim() || MODO_DE_ENVIO_PADRAO;
+  if (modo !== 'nenhum') {
+    payload.shipping = { ...(payload.shipping || {}), mode: modo };
+  }
 
   if (opts.freteGratis) {
     payload.shipping = { ...(payload.shipping || {}), free_shipping: true };
@@ -697,11 +721,18 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
       payload: comFamilia,
     },
     {
-      forma: 'familia_sem_variacoes_frete_gratis',
+      forma: 'familia_frete_gratis',
       descricao:
-        'Nome de familia, sem variacoes, com FRETE GRATIS ligado. Algumas categorias exigem frete gratis por ' +
-        'faixa de preco — e ai o custo do envio passa a sair da sua margem.',
+        'Familia, sem variacoes, com FRETE GRATIS ligado. Algumas categorias exigem frete gratis por faixa de ' +
+        'preco — e ai o custo do envio passa a sair da sua margem.',
       payload: semVariacoes(montarClone(item, { familyName: nomeDeFamilia, freteGratis: true }).payload),
+    },
+    {
+      forma: 'familia_sem_modo_de_envio',
+      descricao:
+        'Familia, sem variacoes, SEM declarar modalidade de envio. Serve pra confirmar se o "me1" vem do que a ' +
+        'gente manda ou do que o ML infere sozinho.',
+      payload: semVariacoes(montarClone(item, { familyName: nomeDeFamilia, modoDeEnvio: 'nenhum' }).payload),
     },
   ];
 

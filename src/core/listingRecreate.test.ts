@@ -66,14 +66,27 @@ describe('montarClone', () => {
 
   it('limpa o shipping, mantendo so o que e configuravel', () => {
     const { payload } = montarClone(itemBase);
-    expect(payload.shipping).toEqual({ local_pick_up: false, free_shipping: true, dimensions: '10x10x5,300' });
+    expect(payload.shipping).toEqual({ local_pick_up: false, free_shipping: true, dimensions: '10x10x5,300', mode: 'me2' });
   });
 
-  it('NAO copia o mode do anuncio antigo', () => {
-    // Anuncio velho carrega me1, modalidade que a conta pode nao ter mais: o ML recusa com
-    // "User has not mode me1". Mesma armadilha do GTIN — herdar uma condicao que ja nao vale.
+  it('DECLARA a modalidade atual em vez de herdar a antiga', () => {
+    // Nao basta parar de copiar o me1: sem o campo, o ML infere — e em categoria velha ele infere
+    // me1, que a conta nao tem mais. Declarar e o unico jeito de nao depender do passado.
     const { payload } = montarClone({ ...itemBase, shipping: { ...itemBase.shipping, mode: 'me1' } });
+    expect(payload.shipping.mode).toBe('me2');
+  });
+
+  it('da pra omitir a modalidade de proposito, pra diagnostico', () => {
+    const { payload } = montarClone(itemBase, { modoDeEnvio: 'nenhum' });
     expect(payload.shipping.mode).toBeUndefined();
+  });
+
+  it('descarta atributo que o ML calcula e nao aceita receber', () => {
+    const { payload } = montarClone({
+      ...itemBase,
+      attributes: [{ id: 'BRAND', value_name: 'MCS' }, { id: 'PRODUCT_FEATURES', value_name: 'algo' }],
+    });
+    expect(payload.attributes).toEqual([{ id: 'BRAND', value_name: 'MCS' }]);
   });
 
   it('frete gratis so entra quando pedido, e avisa que sai da margem', () => {
