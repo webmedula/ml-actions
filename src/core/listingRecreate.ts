@@ -683,8 +683,29 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
 export interface FormaTestada {
   forma: string;
   descricao: string;
+  /** O que esta forma varia em relacao as outras do mesmo grupo: 'estrutura' ou 'frete'. */
+  grupo: string;
   ok: boolean;
   erros: string[];
+}
+
+/**
+ * Um grupo de formas que muda SO uma dimensao. Se todas derem o mesmo erro, aquela dimensao nao e a
+ * causa — e essa e a unica maneira de saber, porque a mensagem do ML nao distingue aviso de recusa.
+ *
+ * Errei isso duas vezes antes de acertar. Primeiro dei o veredicto sem comparar nada. Depois exigi
+ * que a mensagem aparecesse em TODAS as formas pra ser considerada independente do payload — mas as
+ * mensagens de frete so aparecem nas formas que chegam ate o frete, entao a condicao descartava
+ * justamente a evidencia que eu queria. Comparar DENTRO do grupo e o que responde.
+ */
+export function errosIguaisNoGrupo(formas: FormaTestada[], grupo: string): string[] {
+  const doGrupo = formas.filter((f) => f.grupo === grupo);
+  if (doGrupo.length < 2) return [];
+  const [primeira, ...resto] = doGrupo;
+  const iguais = primeira.erros.filter((e) => resto.every((f) => f.erros.includes(e)));
+  // So conta se NENHUMA das formas tem erro proprio alem dos iguais: senao elas nao sao equivalentes.
+  const todasIdenticas = doGrupo.every((f) => f.erros.length === iguais.length);
+  return todasIdenticas ? iguais : [];
 }
 
 export async function diagnosticarFormas(itemId: string, familyName?: string): Promise<any> {
@@ -699,29 +720,34 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
   const base = montarClone(item, {}).payload;
   const comFamilia = montarClone(item, { familyName: nomeDeFamilia }).payload;
 
-  const formas: Array<{ forma: string; descricao: string; payload: Record<string, any> }> = [
+  const formas: Array<{ forma: string; descricao: string; grupo: string; payload: Record<string, any> }> = [
     {
       forma: 'como_esta',
+      grupo: 'estrutura',
       descricao: 'Titulo proprio + variacoes, exatamente como o anuncio original.',
       payload: base,
     },
     {
       forma: 'sem_variacoes',
+      grupo: 'estrutura',
       descricao: 'Titulo proprio, SEM variacoes. Se passar, da pra criar o anuncio e adicionar as variacoes depois.',
       payload: semVariacoes(base),
     },
     {
       forma: 'familia_sem_variacoes',
+      grupo: 'frete',
       descricao: 'Nome de familia, SEM variacoes. O ML gera o titulo a partir da familia.',
       payload: semVariacoes(comFamilia),
     },
     {
       forma: 'familia_com_variacoes',
+      grupo: 'estrutura',
       descricao: 'Nome de familia E variacoes juntos — a combinacao que o erro diz ser invalida.',
       payload: comFamilia,
     },
     {
       forma: 'familia_frete_gratis',
+      grupo: 'frete',
       descricao:
         'Familia, sem variacoes, com FRETE GRATIS ligado. Algumas categorias exigem frete gratis por faixa de ' +
         'preco — e ai o custo do envio passa a sair da sua margem.',
@@ -729,6 +755,7 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
     },
     {
       forma: 'familia_sem_modo_de_envio',
+      grupo: 'frete',
       descricao:
         'Familia, sem variacoes, SEM declarar modalidade de envio. Serve pra confirmar se o "me1" vem do que a ' +
         'gente manda ou do que o ML infere sozinho.',
@@ -739,36 +766,27 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
   const testadas: FormaTestada[] = [];
   for (const f of formas) {
     const v = await validateItemPayload(f.payload);
-    testadas.push({ forma: f.forma, descricao: f.descricao, ok: v.ok, erros: v.erros });
+    testadas.push({ forma: f.forma, descricao: f.descricao, grupo: f.grupo, ok: v.ok, erros: v.erros });
   }
 
   const aceitas = testadas.filter((t) => t.ok);
+  const naoDependemDoFrete = errosIguaisNoGrupo(testadas, 'frete');
 
-  /**
-   * Mensagem que aparece em TODAS as formas nao vem do payload.
-   *
-   * Cada forma manda um corpo diferente. Se a mensagem nao muda quando o corpo muda, a causa esta
-   * fora do que controlamos — na conta, na categoria ou no tipo de anuncio. Distinguir isso importa:
-   * sem essa separacao eu dei um veredicto de "nao e recriavel" com base em duas mensagens que
-   * provavelmente eram avisos, e mandei o usuario atras de tres versoes de correcao inutil.
-   */
-  const invariantes = testadas.length > 1
-    ? testadas[0].erros.filter((e) => testadas.every((t) => t.erros.includes(e)))
-    : [];
-  const variaveis = (t: FormaTestada) => t.erros.filter((e) => !invariantes.includes(e));
-  const semErroProprio = testadas.filter((t) => !t.ok && variaveis(t).length === 0);
+  // A forma que foi mais longe: menos erros que nao sejam os ja explicados pelo grupo.
+  const proprios = (t: FormaTestada) => t.erros.filter((e) => !naoDependemDoFrete.includes(e));
+  const maisLonge = [...testadas].sort((a, b) => proprios(a).length - proprios(b).length)[0];
 
   let veredicto: string;
   if (aceitas.length > 0) {
     veredicto = aceitas.some((t) => t.forma === 'como_esta')
       ? 'O formato original passa. O erro anterior veio de outra coisa — compare os erros abaixo.'
-      : `O ML aceita: ${aceitas.map((t) => t.forma).join(', ')}. A recriacao e possivel, mas mudando a forma do anuncio — leia a descricao antes de decidir se o resultado ainda e o anuncio que voce quer.`;
-  } else if (semErroProprio.length > 0) {
+      : `O ML aceita: ${aceitas.map((t) => t.forma).join(', ')}. A recriacao e possivel, mas mudando a forma do anuncio.`;
+  } else if (naoDependemDoFrete.length > 0 && maisLonge && proprios(maisLonge).length === 0) {
     veredicto =
-      `Nenhuma forma passou limpa, MAS ${semErroProprio.map((t) => t.forma).join(', ')} so recebeu mensagem que ` +
-      'aparece em todas as formas — ou seja, que nao vem do que a gente manda. Isso costuma ser aviso da conta ou ' +
-      'da categoria, e nao impedimento. Nao da pra confirmar sem criar de verdade: use a sondagem, que cria um ' +
-      'anuncio pausado com estoque 1 e descarta em seguida.';
+      `A forma "${maisLonge.forma}" passou por tudo que depende do que a gente envia. O que sobrou aparece IGUAL ` +
+      'nas tres variantes de frete (modo declarado, modo omitido e frete gratis ligado), entao nao e causado pelo ' +
+      'corpo enviado — e aviso da conta ou da categoria. Pode nao ser impedimento: so a sondagem responde, criando ' +
+      'um anuncio pausado com estoque 1 e descartando em seguida.';
   } else {
     veredicto =
       'Todas as formas foram recusadas por motivos que mudam conforme o payload. Este anuncio nao e recriavel por ' +
@@ -781,9 +799,9 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
     temVariacoes: Array.isArray(item?.variations) ? item.variations.length : 0,
     familyNameOriginal: item?.family_name ?? null,
     veredicto,
-    /** Mensagens iguais em todas as formas: nao sao causadas pelo corpo enviado. */
-    mensagensQueNaoDependemDoPayload: invariantes,
-    formas: testadas.map((t) => ({ ...t, errosProprios: variaveis(t) })),
+    /** Mensagens identicas nas formas que so variam o frete: nao vem do que enviamos. */
+    mensagensQueNaoDependemDoPayload: naoDependemDoFrete,
+    formas: testadas.map((t) => ({ ...t, errosProprios: proprios(t) })),
     aviso: 'Nenhum anuncio foi criado. /items/validate apenas valida.',
   };
 }

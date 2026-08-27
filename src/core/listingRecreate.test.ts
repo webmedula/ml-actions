@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avaliacoesParaRecuperar, interpretarSondagem, montarClone } from './listingRecreate';
+import { avaliacoesParaRecuperar, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
 
 const itemBase = {
   id: 'MLB123',
@@ -339,5 +339,46 @@ describe('GTIN — recriar cria sob as regras de hoje', () => {
 
   it('avisa quando o GTIN e declarado como inexistente', () => {
     expect(montarClone(itemBase, { gtin: '-1' }).avisos.join(' ')).toContain('inexistente');
+  });
+});
+
+/**
+ * Distinguir "o ML recusou por causa do que mandamos" de "o ML avisou algo da conta" e o que evita
+ * um veredicto errado. Errei isso duas vezes: primeiro sem comparar nada, depois exigindo que a
+ * mensagem aparecesse em TODAS as formas — o que descartava justamente a evidencia util, porque
+ * mensagem de frete so aparece nas formas que chegam ate o frete.
+ */
+describe('errosIguaisNoGrupo', () => {
+  const frete = (forma: string, erros: string[]) => ({ forma, descricao: '', grupo: 'frete', ok: false, erros });
+
+  it('formas que so variam o frete e dao o MESMO erro provam que o frete nao e a causa', () => {
+    const formas = [
+      frete('me2', ['User has not mode me1', 'Mandatory free shipping added']),
+      frete('sem_modo', ['User has not mode me1', 'Mandatory free shipping added']),
+      frete('gratis', ['User has not mode me1', 'Mandatory free shipping added']),
+    ];
+    expect(errosIguaisNoGrupo(formas, 'frete')).toEqual(['User has not mode me1', 'Mandatory free shipping added']);
+  });
+
+  it('se uma forma do grupo tem erro proprio, o grupo nao e equivalente e nada e concluido', () => {
+    const formas = [
+      frete('me2', ['A']),
+      frete('gratis', ['A', 'B']),
+    ];
+    expect(errosIguaisNoGrupo(formas, 'frete')).toEqual([]);
+  });
+
+  it('mensagem de OUTRO grupo nao contamina a conclusao', () => {
+    const formas = [
+      { forma: 'estrutura1', descricao: '', grupo: 'estrutura', ok: false, erros: ['falta family_name'] },
+      frete('me2', ['User has not mode me1']),
+      frete('gratis', ['User has not mode me1']),
+    ];
+    // "falta family_name" nunca aparece no grupo de frete: nao entra no resultado.
+    expect(errosIguaisNoGrupo(formas, 'frete')).toEqual(['User has not mode me1']);
+  });
+
+  it('grupo com uma forma so nao conclui nada — nao ha comparacao possivel', () => {
+    expect(errosIguaisNoGrupo([frete('unica', ['A'])], 'frete')).toEqual([]);
   });
 });
