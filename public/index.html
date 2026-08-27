@@ -136,22 +136,65 @@ async function carregar() {
   carregarHistorico();
 }
 
+const ROTULO_ACAO = {
+  recriar:              { texto: 'recriar', cor: 'var(--green)' },
+  recriar_com_cautela:  { texto: 'cautela', cor: '#d79a2b' },
+  sondar:               { texto: 'sondar antes', cor: 'var(--muted, #888)' },
+};
+
+function dinheiro(v) {
+  return v == null ? '—' : 'R$ ' + Number(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/**
+ * Lista de candidatos, na ordem que o ml-analytics devolve: primeiro o que tem acao possivel,
+ * depois por dinheiro. Anuncios onde recriar nao zera nada nao aparecem — oferecer o botao ali
+ * seria convidar a destruir historico a troco de nada.
+ */
 async function carregarCandidatos() {
   const el = document.getElementById('candidatos');
   try {
     const d = await api('/api/candidates');
     if (!d.disponivel) { el.innerHTML = '<div class="insight warn">' + esc(d.motivo || 'Lista indisponível.') + '</div>'; return; }
-    if (!d.items.length) { el.innerHTML = '<div class="muted">Nenhum anúncio classificado como recriável no momento.</div>'; return; }
-    el.innerHTML = '<div class="muted">Diagnóstico de ' + hora(d.atualizadoEm) + ' · ' + d.items.length + ' candidato(s).</div>' +
-      '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th><th class="num">Vendidos</th><th></th></tr></thead><tbody>' +
-      d.items.map(i => '<tr>' +
-        '<td class="title-cell">' + (i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId)) +
-          '<div class="muted">' + esc(i.itemId) + ' · ' + esc(i.classificacao) + '</div></td>' +
-        '<td class="num">' + (i.nota == null ? '—' : i.nota.toFixed(1).replace('.', ',') + ' ★') + '</td>' +
-        '<td class="num">' + (i.totalAvaliacoes == null ? '—' : i.totalAvaliacoes) + '</td>' +
-        '<td class="num">' + (i.vendidos == null ? '—' : i.vendidos) + '</td>' +
-        '<td class="num"><button class="secondary" onclick="simular(\'' + i.itemId + '\')">Simular…</button></td>' +
-        '</tr>').join('') + '</tbody></table>';
+    if (!d.items.length) { el.innerHTML = '<div class="muted">Nenhum anúncio candidato à recriação no momento.</div>'; return; }
+
+    const antiga = d.fonte !== 'fila';
+    const aviso = antiga
+      ? '<div class="insight warn">O ml-analytics ainda não tem a fila (<code>/api/fila</code>). ' +
+        'A lista abaixo traz só o veredicto técnico, sem o quanto cada anúncio fatura — atualize o analytics para decidir com o dinheiro à vista.</div>'
+      : '';
+
+    const colunasDinheiro = antiga
+      ? '<th class="num">Vendidos</th>'
+      : '<th class="num">Líquido 30d</th><th class="num">Recuperar exige</th>';
+
+    el.innerHTML = aviso +
+      '<div class="muted">Diagnóstico de ' + hora(d.atualizadoEm) + ' · ' + d.items.length + ' candidato(s), do mais relevante para o menos.</div>' +
+      '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th>' +
+      colunasDinheiro + '<th></th></tr></thead><tbody>' +
+      d.items.map(i => {
+        const nome = i.permalink
+          ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>'
+          : esc(i.title || i.itemId);
+        const a = ROTULO_ACAO[i.acao];
+        const marca = a ? ' · <b style="color:' + a.cor + '">' + a.texto + '</b>' : '';
+        const celulas = antiga
+          ? '<td class="num">' + (i.vendidos == null ? '—' : i.vendidos) + '</td>'
+          : '<td class="num">' + dinheiro(i.liquidoEmRisco) + '</td>' +
+            '<td class="num">' + (i.avaliacoesParaRecuperar == null ? '—' : i.avaliacoesParaRecuperar + ' nota(s) 5') + '</td>';
+
+        return '<tr>' +
+          '<td class="title-cell">' + nome +
+            '<div class="muted">' + esc(i.itemId) + marca + '</div>' +
+            (i.porque ? '<div class="muted" style="margin-top:4px">' + esc(i.porque) + '</div>' : '') + '</td>' +
+          '<td class="num">' + (i.nota == null ? '—' : i.nota.toFixed(1).replace('.', ',') + ' ★') + '</td>' +
+          '<td class="num">' + (i.totalAvaliacoes == null ? '—' : i.totalAvaliacoes) + '</td>' +
+          celulas +
+          '<td class="num"><button class="secondary" onclick="simular(\'' + i.itemId + '\')">Simular…</button></td>' +
+          '</tr>';
+      }).join('') + '</tbody></table>' +
+      (antiga ? '' : '<div class="muted" style="margin-top:10px">"Líquido 30d" é o faturamento do anúncio, não prejuízo — é o que o anúncio novo deixa para trás. ' +
+        'Quando "recuperar exige" for um número pequeno, conseguir essas avaliações sai mais barato que recriar.</div>');
   } catch (e) {
     el.innerHTML = '<div class="insight bad">' + esc(e.message) + '</div>';
   }
