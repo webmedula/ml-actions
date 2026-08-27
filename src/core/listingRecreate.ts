@@ -47,8 +47,15 @@ const CAMPOS_ACEITOS = [
   'family_name',
 ] as const;
 
-/** De `shipping`, so o que e configuravel. methods/free_methods/logistic_type sao derivados. */
-const SHIPPING_ACEITO = ['mode', 'local_pick_up', 'free_shipping', 'dimensions'] as const;
+/**
+ * De `shipping`, so o que e configuravel. methods/free_methods/logistic_type sao derivados.
+ *
+ * `mode` saiu da lista: anuncio antigo carrega `me1`, uma modalidade de envio que a conta pode nao
+ * ter mais, e o ML recusa com "User has not mode me1". E o mesmo tipo de armadilha do GTIN — o
+ * clone herdando uma condicao que era valida quando o anuncio nasceu e nao e mais. Sem `mode`, o
+ * ML atribui a modalidade vigente da conta.
+ */
+const SHIPPING_ACEITO = ['local_pick_up', 'free_shipping', 'dimensions'] as const;
 
 /** Atributos e sale_terms: o ML quer o id e o valor. O resto (name, value_type, grupos) e enfeite. */
 function limparAtributos(lista: any): any[] | undefined {
@@ -107,6 +114,14 @@ export interface OpcoesClone {
    */
   familyName?: string;
   /**
+   * Forcar frete gratis no anuncio novo.
+   *
+   * Algumas categorias passaram a EXIGIR frete gratis por faixa de preco ("mandatory_free_shipping").
+   * Nao ligo isso sozinho: frete gratis sai do bolso do vendedor, e mudar isso em silencio alteraria
+   * a margem sem ninguem decidir. Fica como escolha explicita.
+   */
+  freteGratis?: boolean;
+  /**
    * GTIN (EAN/UPC) do produto.
    *
    * Recriar nao e clonar: o anuncio novo nasce sob as regras de HOJE. Categorias que passaram a
@@ -152,6 +167,11 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
 
   const frete = limparShipping(item?.shipping);
   if (frete) payload.shipping = frete; else delete payload.shipping;
+
+  if (opts.freteGratis) {
+    payload.shipping = { ...(payload.shipping || {}), free_shipping: true };
+    avisos.push('Frete gratis LIGADO no anuncio novo: o custo do envio passa a sair da sua margem.');
+  }
 
   // GTIN informado pelo operador: substitui o que houver, pra nao duplicar o atributo.
   const gtin = (opts.gtin || '').trim();
@@ -675,6 +695,13 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
       forma: 'familia_com_variacoes',
       descricao: 'Nome de familia E variacoes juntos — a combinacao que o erro diz ser invalida.',
       payload: comFamilia,
+    },
+    {
+      forma: 'familia_sem_variacoes_frete_gratis',
+      descricao:
+        'Nome de familia, sem variacoes, com FRETE GRATIS ligado. Algumas categorias exigem frete gratis por ' +
+        'faixa de preco — e ai o custo do envio passa a sair da sua margem.',
+      payload: semVariacoes(montarClone(item, { familyName: nomeDeFamilia, freteGratis: true }).payload),
     },
   ];
 
