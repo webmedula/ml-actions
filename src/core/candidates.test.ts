@@ -22,18 +22,18 @@ describe('candidatosDaFila', () => {
     expect(ids).not.toContain('D');
   });
 
-  it('tambem deixa de fora quem se resolve com avaliacao', () => {
-    // Nao e "nao ha o que fazer" — e que a providencia certa nao passa por aqui.
-    expect(candidatosDaFila(fila).map((c) => c.itemId)).not.toContain('E');
+  it('MANTEM quem se resolve com avaliacao: ali recriar funciona, so ha caminho mais barato', () => {
+    // Esconder decidiria pelo operador. A alternativa aparece na linha; a escolha e dele.
+    expect(candidatosDaFila(fila).map((c) => c.itemId)).toContain('E');
   });
 
-  it('mantem recriar, cautela e sondar', () => {
-    expect(candidatosDaFila(fila).map((c) => c.itemId)).toEqual(['A', 'B', 'C']);
+  it('so o catalogo sai da lista', () => {
+    expect(candidatosDaFila(fila).map((c) => c.itemId)).toEqual(['A', 'B', 'C', 'E']);
   });
 
   it('preserva a ordem que o analytics enviou — ela ja e a ordem de trabalho', () => {
     const invertida = [...fila].reverse();
-    expect(candidatosDaFila(invertida).map((c) => c.itemId)).toEqual(['C', 'B', 'A']);
+    expect(candidatosDaFila(invertida).map((c) => c.itemId)).toEqual(['E', 'C', 'B', 'A']);
   });
 
   it('carrega o dinheiro e a alternativa pra tela poder mostrar', () => {

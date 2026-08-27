@@ -138,6 +138,7 @@ async function carregar() {
 
 const ROTULO_ACAO = {
   recriar:              { texto: 'recriar', cor: 'var(--green)' },
+  recuperar_por_avaliacao: { texto: 'dá pra recuperar sem recriar', cor: '#4a9fd8' },
   recriar_com_cautela:  { texto: 'cautela', cor: '#d79a2b' },
   sondar:               { texto: 'sondar antes', cor: 'var(--muted, #888)' },
 };
@@ -169,7 +170,9 @@ async function carregarCandidatos() {
       : '<th class="num">Líquido 30d</th><th class="num">Recuperar exige</th>';
 
     el.innerHTML = aviso +
-      '<div class="muted">Diagnóstico de ' + hora(d.atualizadoEm) + ' · ' + d.items.length + ' candidato(s), do mais relevante para o menos.</div>' +
+      '<div class="muted">Diagnóstico de ' + hora(d.atualizadoEm) + ' · ' + d.items.length + ' candidato(s), do mais relevante para o menos.' +
+        (d.ocultados ? ' ' + d.ocultados + ' anúncio(s) de nota baixa não aparecem aqui: as opiniões pertencem ao produto do catálogo e recriar não zeraria nada.' : '') +
+      '</div>' +
       '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th>' +
       colunasDinheiro + '<th></th></tr></thead><tbody>' +
       d.items.map(i => {

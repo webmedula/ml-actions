@@ -37,21 +37,29 @@ export interface ListaCandidatos {
   /** 'fila' (com dinheiro e recomendacao) ou 'ratings' (formato antigo, so o veredicto tecnico). */
   fonte?: 'fila' | 'ratings';
   items: Candidato[];
+  /** Quantos ficaram de fora por recriar nao zerar neles. Sem esse numero a lista curta vira duvida. */
+  ocultados?: number;
+  /** Total de anuncios abaixo do limite de nota, antes de qualquer filtro. */
+  totalAbaixoDoLimite?: number;
 }
 
 /** So estas classificacoes fazem sentido recriar. As demais o analytics ja descartou. */
 const ACIONAVEIS = new Set(['recriavel', 'indefinido', 'depende_do_user_product']);
 
 /**
- * Acoes que pedem alguma providencia. `nao_recriar` fica de fora: recriar ali nao zera nada, e
- * oferecer o botao seria convidar a destruir historico a troco de nada.
+ * O que NAO entra na lista: so o caso em que recriar comprovadamente nao produz efeito.
+ *
+ * A primeira versao tirava tambem `recuperar_por_avaliacao`, e isso estava errado. Ali recriar
+ * FUNCIONA — apenas existe um caminho mais barato. Esconder o anuncio decide pelo operador, e a
+ * lista chegava quase vazia sem explicar o porque. Agora ele aparece com a alternativa a vista, e
+ * quem decide e quem opera.
  */
-const ACOES_QUE_ENTRAM = new Set(['recriar', 'recriar_com_cautela', 'sondar']);
+const ACAO_OCULTA = 'nao_recriar';
 
 /** Converte a fila do analytics em candidatos. Pura, pra poder testar sem rede. */
 export function candidatosDaFila(itens: any[]): Candidato[] {
   return (itens || [])
-    .filter((i: any) => !i.acao || ACOES_QUE_ENTRAM.has(i.acao))
+    .filter((i: any) => i.acao !== ACAO_OCULTA)
     .map((i: any) => ({
       itemId: i.itemId,
       title: i.titulo,
@@ -119,9 +127,17 @@ export async function buscarCandidatos(): Promise<ListaCandidatos> {
     const fila = await buscar(`${config.analyticsBaseUrl}/api/fila`);
 
     if (fila.ok) {
-      const items = candidatosDaFila(fila.dados?.itens);
+      const todos = fila.dados?.itens || [];
+      const items = candidatosDaFila(todos);
 
-      return { disponivel: true, atualizadoEm: fila.dados?.atualizadoEm, fonte: 'fila', items };
+      return {
+        disponivel: true,
+        atualizadoEm: fila.dados?.atualizadoEm,
+        fonte: 'fila',
+        items,
+        ocultados: todos.length - items.length,
+        totalAbaixoDoLimite: todos.length,
+      };
     }
 
     logger.info(`[CANDIDATOS] /api/fila indisponivel (${fila.motivo}); usando /api/ratings.`);
