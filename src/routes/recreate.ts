@@ -3,6 +3,7 @@ import { config } from '../config';
 import { buscarCandidatos } from '../core/candidates';
 import {
   descartarSondagem,
+  diagnosticarFormas,
   executarRecriacao,
   lerHistorico,
   RecriacaoBloqueada,
@@ -114,5 +115,21 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
   /** Historico das recriacoes, com o snapshot do anuncio antigo pra reverter a mao. */
   app.get('/api/listings/recreations', async () => {
     return { escritaHabilitada: config.recreateEnabled, items: lerHistorico() };
+  });
+
+  /**
+   * Descobre em qual formato o ML aceitaria este anuncio, sem criar nada.
+   * Existe porque erro contraditorio do ML (exige familia E recusa variacoes com familia) nao se
+   * resolve por leitura — se resolve perguntando ao proprio ML, que e de graca via /items/validate.
+   */
+  app.get('/api/listings/:itemId/formas', async (req, reply) => {
+    const { itemId } = req.params as { itemId: string };
+    const { familia } = req.query as { familia?: string };
+    try {
+      return await diagnosticarFormas(itemId, familia);
+    } catch (err: any) {
+      reply.code(err?.status || 500);
+      return { mensagem: err?.message || 'Erro ao diagnosticar formas' };
+    }
   });
 }

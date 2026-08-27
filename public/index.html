@@ -203,6 +203,34 @@ async function carregarCandidatos() {
   }
 }
 
+/**
+ * Pergunta ao ML em qual formato ESTE anúncio seria aceito hoje.
+ *
+ * Existe porque a validação pode devolver exigências contraditórias (pedir família e recusar
+ * variações junto com ela). Nesse caso ler o erro não resolve — testar resolve, e testar é de graça.
+ */
+async function descobrirFormas() {
+  const el = document.getElementById('formas');
+  const id = (sim && sim.itemId) || ultimoItemId;
+  if (!el || !id) return;
+  el.innerHTML = '<div class="muted" style="margin-top:8px">Testando formatos…</div>';
+  try {
+    const campo = document.getElementById('familyInput');
+    const familia = (campo && campo.value.trim()) || '';
+    const d = await api('/api/listings/' + id + '/formas' + (familia ? '?familia=' + encodeURIComponent(familia) : ''));
+    el.innerHTML = '<div class="insight" style="margin-top:8px">' + esc(d.veredicto) + '</div>' +
+      '<table style="margin-top:6px"><thead><tr><th>Formato</th><th>Resultado</th></tr></thead><tbody>' +
+      d.formas.map(f => '<tr>' +
+        '<td>' + esc(f.forma) + '<div class="muted">' + esc(f.descricao) + '</div></td>' +
+        '<td>' + (f.ok
+          ? '<b style="color:var(--green)">aceito</b>'
+          : '<span style="color:var(--red)">recusado</span><div class="muted">' + f.erros.map(esc).join('<br>') + '</div>') +
+        '</td></tr>').join('') + '</tbody></table>';
+  } catch (e) {
+    el.innerHTML = '<div class="insight bad" style="margin-top:8px">' + esc(e.message) + '</div>';
+  }
+}
+
 async function carregarHistorico() {
   const el = document.getElementById('historico');
   try {
@@ -285,6 +313,9 @@ function render(s) {
       s.validacao.erros.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>' +
       (s.validacao.bruto ? '<details style="margin-top:8px"><summary style="cursor:pointer">Resposta crua do Mercado Livre</summary>' +
         '<pre style="max-height:200px;font-size:11px">' + esc(JSON.stringify(s.validacao.bruto, null, 2)) + '</pre></details>' : '') +
+      '<div style="margin-top:10px"><button class="secondary" onclick="descobrirFormas()">Descobrir qual formato o ML aceita</button>' +
+      '<div class="muted" style="margin-top:4px">Testa algumas formas do anúncio contra a validação do ML. Não cria nada.</div>' +
+      '<div id="formas"></div></div>' +
       '</div>';
   } else {
     h += '<div class="muted" style="margin-bottom:12px">✅ O Mercado Livre validou o clone. Nada foi criado ainda.</div>';

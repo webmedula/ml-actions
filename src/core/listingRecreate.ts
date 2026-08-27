@@ -623,3 +623,81 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
 
   return registro;
 }
+
+// --- 5. Sonda de FORMA do payload ---
+
+/**
+ * DESCOBRE QUAL FORMATO O ML ACEITA, sem criar nada.
+ *
+ * Um anuncio com variacoes numa categoria que exige familia produz dois erros contraditorios ao
+ * mesmo tempo: "falta family_name" e "variations e invalido com family name". Nao da pra saber por
+ * leitura qual e a saida — e cada tentativa as cegas gasta o tempo de quem opera.
+ *
+ * `/items/validate` nao cria anuncio e nao custa nada alem da chamada. Entao em vez de adivinhar,
+ * pergunta-se ao proprio ML: monta-se o payload em varias formas e ve-se qual passa.
+ */
+export interface FormaTestada {
+  forma: string;
+  descricao: string;
+  ok: boolean;
+  erros: string[];
+}
+
+export async function diagnosticarFormas(itemId: string, familyName?: string): Promise<any> {
+  const item = await getItemFull(itemId);
+  const nomeDeFamilia = (familyName || '').trim() || item?.title || 'Familia';
+
+  const semVariacoes = (p: Record<string, any>) => {
+    const { variations, ...resto } = p;
+    return resto;
+  };
+
+  const base = montarClone(item, {}).payload;
+  const comFamilia = montarClone(item, { familyName: nomeDeFamilia }).payload;
+
+  const formas: Array<{ forma: string; descricao: string; payload: Record<string, any> }> = [
+    {
+      forma: 'como_esta',
+      descricao: 'Titulo proprio + variacoes, exatamente como o anuncio original.',
+      payload: base,
+    },
+    {
+      forma: 'sem_variacoes',
+      descricao: 'Titulo proprio, SEM variacoes. Se passar, da pra criar o anuncio e adicionar as variacoes depois.',
+      payload: semVariacoes(base),
+    },
+    {
+      forma: 'familia_sem_variacoes',
+      descricao: 'Nome de familia, SEM variacoes. O ML gera o titulo a partir da familia.',
+      payload: semVariacoes(comFamilia),
+    },
+    {
+      forma: 'familia_com_variacoes',
+      descricao: 'Nome de familia E variacoes juntos — a combinacao que o erro diz ser invalida.',
+      payload: comFamilia,
+    },
+  ];
+
+  const testadas: FormaTestada[] = [];
+  for (const f of formas) {
+    const v = await validateItemPayload(f.payload);
+    testadas.push({ forma: f.forma, descricao: f.descricao, ok: v.ok, erros: v.erros });
+  }
+
+  const aceitas = testadas.filter((t) => t.ok);
+  const veredicto = aceitas.length === 0
+    ? 'O ML recusou TODAS as formas. Este anuncio nao e recriavel por clone: as regras da categoria mudaram desde que ele foi criado. Veja os erros de cada forma pra saber o que falta.'
+    : aceitas.some((t) => t.forma === 'como_esta')
+      ? 'O formato original passa. O erro anterior veio de outra coisa — compare os erros abaixo.'
+      : `O ML aceita: ${aceitas.map((t) => t.forma).join(', ')}. A recriacao e possivel, mas mudando a forma do anuncio — leia a descricao antes de decidir se o resultado ainda e o anuncio que voce quer.`;
+
+  return {
+    itemId,
+    titulo: item?.title,
+    temVariacoes: Array.isArray(item?.variations) ? item.variations.length : 0,
+    familyNameOriginal: item?.family_name ?? null,
+    veredicto,
+    formas: testadas,
+    aviso: 'Nenhum anuncio foi criado. /items/validate apenas valida.',
+  };
+}
