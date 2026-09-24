@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avaliacoesParaRecuperar, avisosDaValidacao, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
+import { avaliacoesParaRecuperar, avisosDaValidacao, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
 import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
@@ -437,5 +437,62 @@ describe('v15: avisosDaValidacao', () => {
 
   it('validacao limpa (2xx) nao gera aviso nenhum', () => {
     expect(avisosDaValidacao({ shipping: {} }, interpretarValidacao(204, undefined))).toEqual([]);
+  });
+});
+
+// --- v16: produto do usuario antes de sondar ---
+
+/** Recorte da resposta REAL de GET /user-products/MLBU4712247709 (2026-09-24). */
+const upReal = {
+  id: 'MLBU4712247709',
+  name: 'Par Lanterna Traseira Led Universal Marmitao Marmita 12v 24v Ambos Lados Vermelho',
+  family_name: 'Par Lanterna Traseira Led Universal Marmitao Marmita 12v 24v',
+  attributes: [
+    { id: 'SELLER_SKU', name: 'SKU', values: [{ id: null, name: 'MCS9001' }] },
+    { id: 'PACKAGE_WIDTH', name: 'Largura da embalagem', values: [{ id: null, name: '19.4 cm' }] },
+    { id: 'SELLER_PACKAGE_WEIGHT', name: 'Peso da embalagem do vendor', values: [{ id: null, name: '1065 g' }] },
+    { id: 'BRAND', name: 'Marca', values: [{ id: '18701064', name: 'MCS' }] },
+    { id: 'LENS_COLOR', name: 'Cor da lente', values: [{ id: '51993', name: 'Vermelho' }] },
+  ],
+};
+const anunciosReais = { ids: ['MLB7418169626'], total: 1 };
+
+describe('v16: resumirProdutoDoUsuario', () => {
+  it('ignora atributos de embalagem na comparacao', () => {
+    const r = resumirProdutoDoUsuario(upReal, anunciosReais, { attributes: [] });
+    expect(r.atributos.map((a) => a.id)).toEqual(['SELLER_SKU', 'BRAND', 'LENS_COLOR']);
+  });
+
+  it('clone com os mesmos atributos-chave: previsao provavel_nao_zera, citando o SKU', () => {
+    const payload = {
+      attributes: [
+        { id: 'SELLER_SKU', value_name: 'MCS9001' },
+        { id: 'BRAND', value_id: '18701064' },
+        { id: 'LENS_COLOR', value_name: 'vermelho' }, // compara sem caixa
+      ],
+    };
+    const r = resumirProdutoDoUsuario(upReal, anunciosReais, payload);
+    expect(r.previsao).toBe('provavel_nao_zera');
+    expect(r.sku).toBe('MCS9001');
+    expect(r.explicacao).toContain('MCS9001');
+    expect(r.anuncios).toEqual(['MLB7418169626']);
+  });
+
+  it('um atributo-chave diferente ou ausente deixa a previsao incerta e diz qual', () => {
+    const payload = {
+      attributes: [
+        { id: 'SELLER_SKU', value_name: 'MCS9001-B' },
+        { id: 'BRAND', value_id: '18701064' },
+      ],
+    };
+    const r = resumirProdutoDoUsuario(upReal, anunciosReais, payload);
+    expect(r.previsao).toBe('incerto');
+    expect(r.atributos.find((a) => a.id === 'SELLER_SKU')?.comparacao).toBe('diferente');
+    expect(r.atributos.find((a) => a.id === 'LENS_COLOR')?.comparacao).toBe('nao_enviado');
+    expect(r.explicacao).toContain('SKU');
+  });
+
+  it('MLBU sem atributos nao preve nada', () => {
+    expect(resumirProdutoDoUsuario({ id: 'X', attributes: [] }, { ids: [], total: 0 }, {}).previsao).toBe('incerto');
   });
 });

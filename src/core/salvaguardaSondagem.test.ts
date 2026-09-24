@@ -26,6 +26,8 @@ const ml = vi.hoisted(() => ({
   updateItem: vi.fn(),
   closeItem: vi.fn(),
   deleteItem: vi.fn(),
+  getUserProduct: vi.fn(),
+  listItemsByUserProduct: vi.fn(),
 }));
 
 vi.mock('../ml/mlClient', async (importOriginal) => {
@@ -69,6 +71,8 @@ beforeEach(() => {
   ml.updateItem.mockResolvedValue({});
   ml.closeItem.mockResolvedValue({});
   ml.deleteItem.mockResolvedValue({});
+  ml.getUserProduct.mockResolvedValue({ id: 'MLBU1', attributes: [] });
+  ml.listItemsByUserProduct.mockResolvedValue({ ids: ['MLB7418169626'], total: 1 });
 });
 
 describe('v15: executar exige sondagem quando a validacao so passou com avisos', () => {

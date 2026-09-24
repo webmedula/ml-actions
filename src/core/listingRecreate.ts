@@ -10,7 +10,9 @@ import {
   getItemDescription,
   getItemFull,
   getRating,
+  getUserProduct,
   getUserProductId,
+  listItemsByUserProduct,
   updateItem,
   validateItemPayload,
   type ResultadoValidacao,
@@ -348,6 +350,8 @@ export interface Simulacao {
   exigeSondagem: boolean;
   /** Produto do usuario do anuncio ORIGINAL — a sondagem compara o do clone com este. */
   userProductIdOriginal: string | null;
+  /** v16: o MLBU do original lido ANTES de sondar — atributos, anuncios nele e a previsao. */
+  produtoDoUsuario: ResumoProdutoDoUsuario | null;
   simuladoEm: string;
   /** Preenchido pela sondagem: o clone pausado ja criado, esperando decisao. */
   sondagem?: Sondagem;
@@ -407,6 +411,134 @@ function novoToken(itemId: string): string {
   return `${itemId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// --- v16: leitura do produto do usuario ANTES de sondar ---
+
+/**
+ * Atributos que NAO identificam o produto: medidas de embalagem (o ML calcula) e afins.
+ * O resto e o que o ML usa pra decidir em qual MLBU o anuncio cai.
+ */
+function atributoDeEmbalagem(id: string): boolean {
+  return /^(PACKAGE_|SELLER_PACKAGE_)/.test(id) || id === 'SHIPMENT_PACKING';
+}
+
+export interface AtributoChave {
+  id: string;
+  nome: string;
+  /** Valor no MLBU do original. */
+  valorOriginal: string | null;
+  /** Valor que o clone enviaria. null = o clone nao envia este atributo. */
+  valorClone: string | null;
+  /** 'igual' | 'diferente' | 'nao_enviado' */
+  comparacao: 'igual' | 'diferente' | 'nao_enviado';
+}
+
+export interface ResumoProdutoDoUsuario {
+  id: string;
+  nome: string | null;
+  familyName: string | null;
+  sku: string | null;
+  atributos: AtributoChave[];
+  /** Anuncios do vendedor nesse MLBU, segundo o ML (inclui o original). */
+  anuncios: string[];
+  totalAnuncios: number;
+  /**
+   * 'provavel_nao_zera': o clone leva TODOS os atributos-chave iguais — o ML tende a reagrupar.
+   * 'incerto': algum atributo-chave muda ou nao vai. So a sondagem responde.
+   * Previsao baseada em evidencia (MLB7418169626, 2026-09-24: duas sondagens, uma com familia
+   * diferente, ambas cairam no mesmo MLBU) — nao em documentacao do ML.
+   */
+  previsao: 'provavel_nao_zera' | 'incerto';
+  explicacao: string;
+  /** Preenchido quando a leitura falhou — o resto do resumo vem vazio. */
+  erro?: string;
+}
+
+function valorDoUp(a: any): { id: string | null; nome: string | null } {
+  const v = Array.isArray(a?.values) ? a.values[0] : null;
+  return { id: v?.id != null ? String(v.id) : null, nome: v?.name != null ? String(v.name) : null };
+}
+
+const normalizar = (x: string) => x.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Funcao PURA: compara o MLBU do original com o payload do clone. */
+export function resumirProdutoDoUsuario(
+  up: any,
+  anuncios: { ids: string[]; total: number },
+  payload: Record<string, any>,
+): ResumoProdutoDoUsuario {
+  const doClone = new Map<string, any>();
+  for (const a of Array.isArray(payload?.attributes) ? payload.attributes : []) doClone.set(a.id, a);
+
+  const atributos: AtributoChave[] = (Array.isArray(up?.attributes) ? up.attributes : [])
+    .filter((a: any) => a?.id && !atributoDeEmbalagem(a.id))
+    .map((a: any) => {
+      const orig = valorDoUp(a);
+      const c = doClone.get(a.id);
+      const valorOriginal = orig.nome ?? orig.id;
+      if (!c) return { id: a.id, nome: a.name || a.id, valorOriginal, valorClone: null, comparacao: 'nao_enviado' as const };
+      const cloneId = c.value_id != null ? String(c.value_id) : null;
+      const cloneNome = c.value_name != null ? String(c.value_name) : null;
+      const igual =
+        (cloneId != null && orig.id != null && cloneId === orig.id) ||
+        (cloneNome != null && orig.nome != null && normalizar(cloneNome) === normalizar(orig.nome));
+      return {
+        id: a.id,
+        nome: a.name || a.id,
+        valorOriginal,
+        valorClone: cloneNome ?? cloneId,
+        comparacao: igual ? ('igual' as const) : ('diferente' as const),
+      };
+    });
+
+  const sku = atributos.find((a) => a.id === 'SELLER_SKU')?.valorOriginal ?? null;
+  const mudam = atributos.filter((a) => a.comparacao !== 'igual');
+  const previsao = atributos.length > 0 && mudam.length === 0 ? 'provavel_nao_zera' : 'incerto';
+  const explicacao =
+    previsao === 'provavel_nao_zera'
+      ? `O clone leva os ${atributos.length} atributos que definem o ${up?.id} exatamente iguais` +
+        (sku ? `, incluindo o SKU ${sku}` : '') +
+        '. O ML tende a colocar o anuncio novo no MESMO produto do usuario — e a nota vem junto. ' +
+        'Mudar o nome de familia nao altera isso.'
+      : `Muda(m) ou nao vai(ao) no clone: ${mudam.map((a) => a.nome).join(', ')}. O ML pode atribuir outro produto do ` +
+        'usuario — so a sondagem confirma.';
+
+  return {
+    id: String(up?.id ?? ''),
+    nome: up?.name ?? null,
+    familyName: up?.family_name ?? null,
+    sku,
+    atributos,
+    anuncios: anuncios.ids,
+    totalAnuncios: anuncios.total,
+    previsao,
+    explicacao,
+  };
+}
+
+async function lerProdutoDoUsuario(
+  userProductId: string | null,
+  sellerId: any,
+  payload: Record<string, any>,
+): Promise<ResumoProdutoDoUsuario | null> {
+  if (!userProductId) return null;
+  try {
+    const [up, anuncios] = await Promise.all([
+      getUserProduct(userProductId),
+      sellerId != null
+        ? listItemsByUserProduct(sellerId, userProductId).catch(() => ({ ids: [], total: 0 }))
+        : Promise.resolve({ ids: [], total: 0 }),
+    ]);
+    return resumirProdutoDoUsuario(up, anuncios, payload);
+  } catch (err: any) {
+    // So leitura e so informativo: se falhar, a simulacao segue e a sondagem continua valendo.
+    return {
+      id: userProductId, nome: null, familyName: null, sku: null, atributos: [], anuncios: [], totalAnuncios: 0,
+      previsao: 'incerto', explicacao: 'Nao consegui ler o produto do usuario — a sondagem continua sendo a prova.',
+      erro: String(err?.message || err),
+    };
+  }
+}
+
 /**
  * Avisos que dependem da RESPOSTA do ML (nao so do anuncio), para mostrar antes do botao.
  *
@@ -461,6 +593,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
   avisos.push(...avisosDaValidacao(item, validacao));
   const rating = await getRating(id).catch(() => null);
   const { userProductId: userProductIdOriginal } = await getUserProductId(id, item);
+  const produtoDoUsuario = await lerProdutoDoUsuario(userProductIdOriginal, item?.seller_id, payload);
 
   const sim: Simulacao = {
     token: novoToken(id),
@@ -485,6 +618,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     validacao,
     exigeSondagem: validacao.soAvisos,
     userProductIdOriginal,
+    produtoDoUsuario,
     simuladoEm: new Date().toISOString(),
   };
 

@@ -342,6 +342,26 @@ function render(s) {
     h += '<div class="muted" style="margin-bottom:12px">✅ O Mercado Livre validou o clone. Nada foi criado ainda.</div>';
   }
 
+  // v16: o produto do usuário (MLBU) lido ANTES de sondar. Só leitura — antecipa o "não zera" sem criar nada.
+  const up = s.produtoDoUsuario;
+  if (up) {
+    const cor = { igual: 'var(--muted)', diferente: 'var(--green)', nao_enviado: '#d79a2b' };
+    const rotulo = { igual: 'igual', diferente: 'muda', nao_enviado: 'não vai' };
+    h += '<div class="panel" style="background:var(--panel-2);margin-bottom:12px">' +
+      '<div class="muted" style="margin-bottom:6px">Produto do usuário <b>' + esc(up.id) + '</b> — é ele que agrupa as opiniões</div>' +
+      (up.erro
+        ? '<div class="muted">' + esc(up.explicacao) + ' (' + esc(up.erro) + ')</div>'
+        : '<div class="insight ' + (up.previsao === 'provavel_nao_zera' ? 'bad' : 'warn') + '" style="margin-bottom:8px">' +
+            (up.previsao === 'provavel_nao_zera' ? '🛑 <b>Provável: não zera.</b> ' : '❓ <b>Incerto.</b> ') + esc(up.explicacao) + '</div>' +
+          '<details><summary style="cursor:pointer" class="muted">' + up.atributos.length + ' atributo(s) que definem o MLBU · ' +
+            up.totalAnuncios + ' anúncio(s) nele: ' + up.anuncios.map(esc).join(', ') + '</summary>' +
+          '<table style="margin-top:6px"><thead><tr><th>Atributo</th><th>Original</th><th>Clone</th><th></th></tr></thead><tbody>' +
+          up.atributos.map(a => '<tr><td>' + esc(a.nome) + '</td><td>' + esc(a.valorOriginal || '—') + '</td><td>' + esc(a.valorClone || '—') +
+            '</td><td style="color:' + cor[a.comparacao] + '">' + rotulo[a.comparacao] + '</td></tr>').join('') +
+          '</tbody></table></details>') +
+      '</div>';
+  }
+
   h += '<details style="margin-bottom:14px"><summary class="muted" style="cursor:pointer">Ver o payload que seria enviado</summary>' +
     '<pre style="max-height:220px;font-size:11px">' + esc(JSON.stringify(s.payload, null, 2)) + '</pre></details>';
 
@@ -367,16 +387,17 @@ function render(s) {
     '</div></div>';
 
   h += '<div id="sondagemBox"></div>';
+  const naoZera = !!(up && up.previsao === 'provavel_nao_zera');
 
   h += '<div class="row" id="acoesSondagem" style="justify-content:flex-end"><button class="secondary" onclick="fecharModal()">Cancelar</button>';
   if (!s.escritaHabilitada) {
     h += '<span class="muted">Escrita desligada neste serviço (<code>RECREATE_ENABLED</code>).</span>';
   } else if (s.validacao.ok && s.exigeSondagem) {
     // v15: validação só com avisos — o servidor recusa executar sem sondar, então o botão nem aparece.
-    h += '<button onclick="sondar()">Sondar (obrigatório)</button>';
+    h += '<button onclick="sondar()">' + (naoZera ? 'Sondar mesmo assim (obrigatório)' : 'Sondar (obrigatório)') + '</button>';
   } else if (s.validacao.ok) {
     // A sondagem vem ANTES do botão de recriar: ela é o que transforma a aposta em decisão.
-    h += '<button onclick="sondar()">Sondar antes (recomendado)</button>' +
+    h += '<button onclick="sondar()">' + (naoZera ? 'Sondar mesmo assim' : 'Sondar antes (recomendado)') + '</button>' +
       '<button class="danger" onclick="executar()">Recriar sem sondar</button>';
   }
   h += '</div>';

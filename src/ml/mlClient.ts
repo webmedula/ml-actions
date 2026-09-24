@@ -279,6 +279,23 @@ export async function validateItemPayload(payload: unknown): Promise<ResultadoVa
   }
 }
 
+/**
+ * v16: o PRODUTO DO USUARIO (MLBU) completo — nome, familia e os atributos que o definem.
+ * Confirmado em 2026-09-24: responde 200 e traz SELLER_SKU entre os atributos.
+ */
+export async function getUserProduct(userProductId: string): Promise<any> {
+  return mlRequest<any>(`/user-products/${encodeURIComponent(userProductId)}`);
+}
+
+/** v16: anuncios do vendedor agrupados num MLBU. Confirmado em 2026-09-24 (200, `results` com os MLB). */
+export async function listItemsByUserProduct(sellerId: string | number, userProductId: string): Promise<{ ids: string[]; total: number }> {
+  const r = await mlRequest<any>(
+    `/users/${encodeURIComponent(String(sellerId))}/items/search?user_product_id=${encodeURIComponent(userProductId)}&limit=50`,
+  );
+  const ids = Array.isArray(r?.results) ? r.results.map(String) : [];
+  return { ids, total: Number(r?.paging?.total ?? ids.length) };
+}
+
 export async function createItem(payload: unknown): Promise<any> {
   return mlRequest<any>('/items', { method: 'POST', body: payload });
 }

@@ -132,6 +132,22 @@ naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviç
 
 ## Histórico de versões
 
+### actions v16 (2026-09-24)
+
+Motivo: no `MLB7418169626`, duas sondagens (uma com nome de família diferente) caíram no mesmo
+`MLBU4712247709`. Cada uma criou um anúncio de teste para descobrir algo que dava para ler de graça.
+
+- **Produto do usuário antes de sondar.** A simulação lê o MLBU do original
+  (`GET /user-products/{id}`) e os anúncios agrupados nele
+  (`GET /users/{id}/items/search?user_product_id=`), e compara os atributos que o definem com os
+  do clone (medidas de embalagem ficam de fora).
+- **Previsão.** Se o clone leva todos os atributos-chave iguais — inclusive o `SELLER_SKU` — o
+  painel mostra **"Provável: não zera"** e o botão vira "Sondar mesmo assim". Se algum muda ou não
+  vai, fica "Incerto". A previsão vem da evidência dos testes, não da documentação do ML; a
+  sondagem continua sendo a prova.
+- Só leitura. Se a leitura falhar, a simulação segue normalmente.
+- Testes: 82 → 86.
+
 ### actions v15 (2026-09-24)
 
 Motivo: o `MLB7418169626` ficou travado em "O Mercado Livre rejeitou o clone" — mas as 8 mensagens
