@@ -422,7 +422,21 @@ async function executar() {
   }
 }
 
+/**
+ * Deep-link ?itemId=MLBxxxxxxxxxx — usado pelo botão "Recriar →" da fila do ml-analytics.
+ * Preenche o campo manual e já dispara a simulação, pra não obrigar a digitar o MLB de novo.
+ */
+function verificarDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const itemId = (params.get('itemId') || '').trim().toUpperCase();
+  if (!itemId) return;
+  const campo = document.getElementById('mlbInput');
+  if (campo) campo.value = itemId;
+  simular(itemId);
+}
+
 carregar();
+verificarDeepLink();
 </script>
 </body>
 </html>
