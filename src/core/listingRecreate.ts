@@ -13,6 +13,7 @@ import {
   getUserProductId,
   updateItem,
   validateItemPayload,
+  type ResultadoValidacao,
 } from '../ml/mlClient';
 
 /**
@@ -51,7 +52,8 @@ const CAMPOS_ACEITOS = [
  * De `shipping`, so o que e configuravel. methods/free_methods/logistic_type sao derivados.
  *
  * `mode` saiu da lista: anuncio antigo carrega `me1`, uma modalidade de envio que a conta pode nao
- * ter mais, e o ML recusa com "User has not mode me1". E o mesmo tipo de armadilha do GTIN — o
+ * ter mais, e o ML responde "User has not mode me1" (v15: descobriu-se que e `warning`, e aparece
+ * mesmo com me2 declarado e sem `dimensions` — vem da conta, nao do payload). E o mesmo tipo de armadilha do GTIN — o
  * clone herdando uma condicao que era valida quando o anuncio nasceu e nao e mais. Sem `mode`, o
  * ML atribui a modalidade vigente da conta.
  */
@@ -61,7 +63,17 @@ const SHIPPING_ACEITO = ['local_pick_up', 'free_shipping', 'dimensions'] as cons
  * Atributos que o ML calcula e nao aceita receber. Mandar rende
  * "ignored because it is not modifiable" — as vezes so ruido, as vezes recusa.
  */
-const ATRIBUTOS_SOMENTE_LEITURA = new Set(['PRODUCT_FEATURES']);
+const ATRIBUTOS_SOMENTE_LEITURA = new Set([
+  'PRODUCT_FEATURES',
+  // v15: o ML calcula as medidas da embalagem sozinho e responde "ignored because it is not
+  // modifiable" para cada um. Testado em 2026-09-24: tirar os seis some com os avisos e nada muda.
+  'PACKAGE_DATA_SOURCE',
+  'PACKAGE_HEIGHT',
+  'PACKAGE_LENGTH',
+  'PACKAGE_WEIGHT',
+  'PACKAGE_WIDTH',
+  'SHIPMENT_PACKING',
+]);
 
 /**
  * Modalidade de envio do anuncio NOVO.
@@ -328,7 +340,12 @@ export interface Simulacao {
   payload: Record<string, any>;
   avisos: string[];
   /** Resultado do POST /items/validate no ML. `bruto` traz a resposta crua quando ele recusa. */
-  validacao: { ok: boolean; erros: string[]; bruto?: unknown };
+  validacao: ResultadoValidacao;
+  /**
+   * v15: true quando a validacao so passou "com avisos" (400 so com warnings). Nesse caso executar
+   * sem sondar e recusado — a sondagem e a prova real de que o ML aceita criar o anuncio.
+   */
+  exigeSondagem: boolean;
   /** Produto do usuario do anuncio ORIGINAL — a sondagem compara o do clone com este. */
   userProductIdOriginal: string | null;
   simuladoEm: string;
@@ -390,6 +407,30 @@ function novoToken(itemId: string): string {
   return `${itemId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Avisos que dependem da RESPOSTA do ML (nao so do anuncio), para mostrar antes do botao.
+ *
+ * O `mandatory_free_shipping` so pesa na margem se o original NAO tinha frete gratis: quando ja
+ * tinha (caso do MLB7418169626), o ML so esta confirmando o que ja era — avisar seria ruido.
+ */
+export function avisosDaValidacao(item: any, validacao: ResultadoValidacao): string[] {
+  const out: string[] = [];
+  const freteObrigatorio = validacao.causas.some((c) => (c.codigo || '').includes('mandatory_free_shipping'));
+  if (freteObrigatorio && item?.shipping?.free_shipping !== true) {
+    out.push(
+      'O Mercado Livre vai LIGAR O FRETE GRATIS no anuncio novo (obrigatorio nesta categoria/faixa de preco). ' +
+      'O original nao tinha: o custo do envio passa a sair da sua margem.',
+    );
+  }
+  if (validacao.soAvisos) {
+    out.push(
+      'O Mercado Livre respondeu com status de erro, mas todas as mensagens sao so avisos. Isso nao garante que ' +
+      'ele aceite criar o anuncio — por isso executar exige sondar antes.',
+    );
+  }
+  return out;
+}
+
 export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): Promise<Simulacao> {
   limparExpiradas();
 
@@ -417,6 +458,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
 
   const { payload, avisos } = montarClone(item, opts);
   const validacao = await validateItemPayload(payload);
+  avisos.push(...avisosDaValidacao(item, validacao));
   const rating = await getRating(id).catch(() => null);
   const { userProductId: userProductIdOriginal } = await getUserProductId(id, item);
 
@@ -441,12 +483,13 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     payload,
     avisos,
     validacao,
+    exigeSondagem: validacao.soAvisos,
     userProductIdOriginal,
     simuladoEm: new Date().toISOString(),
   };
 
   simulacoes.set(sim.token, sim);
-  logger.info(`[RECRIAR] Simulacao ${sim.token} para ${id}: validacao ${validacao.ok ? 'OK' : 'FALHOU'}.`);
+  logger.info(`[RECRIAR] Simulacao ${sim.token} para ${id}: validacao ${validacao.ok ? (validacao.soAvisos ? 'OK (so avisos)' : 'OK') : 'FALHOU'}.`);
   return sim;
 }
 
@@ -601,6 +644,14 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
   if (!sim.validacao.ok) {
     throw new RecriacaoBloqueada(`A simulacao nao passou na validacao do ML: ${sim.validacao.erros.join('; ')}`);
   }
+  // v15: validacao que passou so com avisos e evidencia fraca. A prova de que o ML aceita criar o
+  // anuncio e a sondagem — e se ela falhar, nada foi tocado. Pular direto pra virada, nao.
+  if (sim.exigeSondagem && !sim.sondagem) {
+    throw new RecriacaoBloqueada(
+      'A validacao do ML passou so com avisos. Sonde antes de executar: a sondagem cria o anuncio pausado e ' +
+      'prova que o ML aceita, sem tocar no original.',
+    );
+  }
   // Se a sondagem ja provou que a nota nao zera, executar seria so jogar fora o historico.
   if (sim.sondagem && sim.sondagem.veredicto !== 'zera') {
     throw new RecriacaoBloqueada(
@@ -686,12 +737,21 @@ export interface FormaTestada {
   /** O que esta forma varia em relacao as outras do mesmo grupo: 'estrutura' ou 'frete'. */
   grupo: string;
   ok: boolean;
+  /** v15: so as causas que BLOQUEIAM (type error ou sem type). */
   erros: string[];
+  /** v15: causas type warning — nao bloqueiam. */
+  avisos: string[];
+  /** Passou, mas o ML respondeu 400 so com avisos. */
+  soAvisos: boolean;
 }
 
 /**
  * Um grupo de formas que muda SO uma dimensao. Se todas derem o mesmo erro, aquela dimensao nao e a
- * causa — e essa e a unica maneira de saber, porque a mensagem do ML nao distingue aviso de recusa.
+ * causa.
+ *
+ * v15: a premissa original ("a mensagem do ML nao distingue aviso de recusa") estava errada — o ML
+ * manda `type` em cada causa, a gente e que descartava. Agora `erros` so tem o que bloqueia, e esta
+ * comparacao roda em cima disso.
  *
  * Errei isso duas vezes antes de acertar. Primeiro dei o veredicto sem comparar nada. Depois exigi
  * que a mensagem aparecesse em TODAS as formas pra ser considerada independente do payload — mas as
@@ -766,7 +826,10 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
   const testadas: FormaTestada[] = [];
   for (const f of formas) {
     const v = await validateItemPayload(f.payload);
-    testadas.push({ forma: f.forma, descricao: f.descricao, grupo: f.grupo, ok: v.ok, erros: v.erros });
+    testadas.push({
+      forma: f.forma, descricao: f.descricao, grupo: f.grupo,
+      ok: v.ok, erros: v.erros, avisos: v.avisos, soAvisos: v.soAvisos,
+    });
   }
 
   const aceitas = testadas.filter((t) => t.ok);
@@ -778,8 +841,11 @@ export async function diagnosticarFormas(itemId: string, familyName?: string): P
 
   let veredicto: string;
   if (aceitas.length > 0) {
-    veredicto = aceitas.some((t) => t.forma === 'como_esta')
-      ? 'O formato original passa. O erro anterior veio de outra coisa — compare os erros abaixo.'
+    const original = aceitas.find((t) => t.forma === 'como_esta');
+    veredicto = original
+      ? (original.soAvisos
+          ? 'O formato original passa — o ML so devolveu avisos, nenhum erro. Sonde para confirmar que ele aceita criar.'
+          : 'O formato original passa. O erro anterior veio de outra coisa — compare os erros abaixo.')
       : `O ML aceita: ${aceitas.map((t) => t.forma).join(', ')}. A recriacao e possivel, mas mudando a forma do anuncio.`;
   } else if (naoDependemDoFrete.length > 0 && maisLonge && proprios(maisLonge).length === 0) {
     veredicto =

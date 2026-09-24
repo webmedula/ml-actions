@@ -14,12 +14,15 @@ export class MlApiError extends Error {
   /** Corpo cru da resposta de erro. Guardado porque o ML as vezes so diz "body.invalid_fields"
    * na mensagem e o detalhe util esta em outro lugar do JSON. */
   corpo: unknown;
-  constructor(status: number, message: string, causas: string[] = [], corpo?: unknown) {
+  /** As mesmas causas, com o `type` que o ML manda (error/warning). */
+  causasTipadas: CausaMl[];
+  constructor(status: number, message: string, causas: string[] = [], corpo?: unknown, causasTipadas: CausaMl[] = []) {
     super(message);
     this.name = 'MlApiError';
     this.status = status;
     this.causas = causas;
     this.corpo = corpo;
+    this.causasTipadas = causasTipadas;
   }
 }
 
@@ -42,22 +45,43 @@ export function mensagemDeErro(data: any, status: number): string {
   return frase || codigo || `Erro HTTP ${status}`;
 }
 
-function extrairCausas(data: any): string[] {
-  const out: string[] = [];
+/**
+ * Uma causa de erro/aviso do ML, com o `type` preservado.
+ *
+ * Ate a v14 o `type` era descartado, e isso custou caro: o `/items/validate` responde 400
+ * `validation_error` mesmo quando TODAS as causas sao `warning` (confirmado em 2026-09-24 no
+ * MLB7418169626: 8 causas, todas warning, e 400). Sem o tipo, aviso e recusa eram indistinguiveis.
+ */
+export interface CausaMl {
+  /** 'desconhecido' quando o ML nao manda `type` — tratado como erro, por seguranca. */
+  tipo: 'error' | 'warning' | 'desconhecido';
+  codigo: string | null;
+  mensagem: string | null;
+  /** "codigo: mensagem" — o formato que o painel sempre mostrou. */
+  texto: string;
+}
+
+export function extrairCausasTipadas(data: any): CausaMl[] {
+  const out: CausaMl[] = [];
 
   const visitar = (c: any): void => {
     if (!c) return;
     if (typeof c === 'string') {
-      out.push(c);
+      out.push({ tipo: 'desconhecido', codigo: null, mensagem: c, texto: c });
       return;
     }
     if (Array.isArray(c)) {
       c.forEach(visitar);
       return;
     }
-    const partes = [c.code, c.message].filter((p: any) => typeof p === 'string' && p.trim());
-    const texto = Array.from(new Set(partes)).join(': ');
-    if (texto) out.push(texto);
+    const codigo = typeof c.code === 'string' && c.code.trim() ? c.code : null;
+    const mensagem = typeof c.message === 'string' && c.message.trim() ? c.message : null;
+    const texto = Array.from(new Set([codigo, mensagem].filter(Boolean))).join(': ');
+    if (texto) {
+      const t = typeof c.type === 'string' ? c.type.toLowerCase() : '';
+      const tipo = t === 'error' ? 'error' : t === 'warning' ? 'warning' : 'desconhecido';
+      out.push({ tipo, codigo, mensagem, texto });
+    }
     if (c.causes) visitar(c.causes);
     if (c.cause) visitar(c.cause);
   };
@@ -65,6 +89,49 @@ function extrairCausas(data: any): string[] {
   visitar(data?.cause);
   visitar(data?.causes);
   return out;
+}
+
+function extrairCausas(data: any): string[] {
+  return extrairCausasTipadas(data).map((c) => c.texto);
+}
+
+export interface ResultadoValidacao {
+  /** Pode seguir para a sondagem: nenhuma causa e erro. */
+  ok: boolean;
+  /**
+   * O ML respondeu 400 mas SO com avisos. `ok` e true, mas a evidencia e mais fraca que um 2xx —
+   * por isso a execucao passa a exigir sondagem antes (salvaguarda 7 do README).
+   */
+  soAvisos: boolean;
+  /** Causas que bloqueiam (type error, ou sem type). */
+  erros: string[];
+  /** Causas type warning: informam, nao bloqueiam. */
+  avisos: string[];
+  causas: CausaMl[];
+  status?: number;
+  bruto?: unknown;
+}
+
+/**
+ * Decide se uma resposta do `/items/validate` bloqueia.
+ *
+ * Regra de aceite de um 400 e RESTRITA de proposito: so vale quando o ML diz `validation_error`,
+ * manda ao menos uma causa, e TODAS sao `warning`. Qualquer outro 400, causa sem `type`, ou 400
+ * sem causas continua sendo recusa.
+ */
+export function interpretarValidacao(status: number, data: any): ResultadoValidacao {
+  if (status >= 200 && status < 300) {
+    return { ok: true, soAvisos: false, erros: [], avisos: [], causas: [], status };
+  }
+  const causas = extrairCausasTipadas(data);
+  const avisos = causas.filter((c) => c.tipo === 'warning').map((c) => c.texto);
+  const bloqueantes = causas.filter((c) => c.tipo !== 'warning').map((c) => c.texto);
+  const soAvisos = status === 400 && data?.error === 'validation_error' && causas.length > 0 && bloqueantes.length === 0;
+  if (soAvisos) {
+    return { ok: true, soAvisos: true, erros: [], avisos, causas, status, bruto: data };
+  }
+  const erros = bloqueantes.length ? bloqueantes : [mensagemDeErro(data, status)];
+  return { ok: false, soAvisos: false, erros, avisos, causas, status, bruto: data };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -129,7 +196,7 @@ async function mlRequest<T>(path: string, opts: MlRequestOpts = {}): Promise<T> 
     const data = text ? JSON.parse(text) : undefined;
 
     if (!res.ok) {
-      throw new MlApiError(res.status, mensagemDeErro(data, res.status), extrairCausas(data), data);
+      throw new MlApiError(res.status, mensagemDeErro(data, res.status), extrairCausas(data), data, extrairCausasTipadas(data));
     }
 
     return data as T;
@@ -198,18 +265,17 @@ export async function getRating(id: string): Promise<MlRating | null> {
 // --- ESCRITA (tudo abaixo altera dados reais da conta) ---
 
 /** Valida um payload de anuncio SEM criar nada. E a rede de seguranca da simulacao. */
-export async function validateItemPayload(payload: unknown): Promise<{ ok: boolean; erros: string[]; bruto?: unknown }> {
+export async function validateItemPayload(payload: unknown): Promise<ResultadoValidacao> {
   try {
     await mlRequest<any>('/items/validate', { method: 'POST', body: payload });
-    return { ok: true, erros: [] };
+    return interpretarValidacao(204, undefined);
   } catch (err: any) {
     if (err instanceof MlApiError) {
       // Sempre devolve o corpo cru junto: quando o ML responde so "body.invalid_fields", e o unico
       // lugar onde da pra descobrir qual campo ele recusou.
-      const erros = err.causas.length ? err.causas : [err.message];
-      return { ok: false, erros, bruto: err.corpo };
+      return interpretarValidacao(err.status, err.corpo ?? { message: err.message });
     }
-    return { ok: false, erros: [String(err?.message || err)] };
+    return { ok: false, soAvisos: false, erros: [String(err?.message || err)], avisos: [], causas: [] };
   }
 }
 

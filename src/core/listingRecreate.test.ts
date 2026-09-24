@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { avaliacoesParaRecuperar, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
+import { avaliacoesParaRecuperar, avisosDaValidacao, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
+import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
   id: 'MLB123',
@@ -349,7 +350,7 @@ describe('GTIN — recriar cria sob as regras de hoje', () => {
  * mensagem de frete so aparece nas formas que chegam ate o frete.
  */
 describe('errosIguaisNoGrupo', () => {
-  const frete = (forma: string, erros: string[]) => ({ forma, descricao: '', grupo: 'frete', ok: false, erros });
+  const frete = (forma: string, erros: string[]) => ({ forma, descricao: '', grupo: 'frete', ok: false, erros, avisos: [], soAvisos: false });
 
   it('formas que so variam o frete e dao o MESMO erro provam que o frete nao e a causa', () => {
     const formas = [
@@ -370,7 +371,7 @@ describe('errosIguaisNoGrupo', () => {
 
   it('mensagem de OUTRO grupo nao contamina a conclusao', () => {
     const formas = [
-      { forma: 'estrutura1', descricao: '', grupo: 'estrutura', ok: false, erros: ['falta family_name'] },
+      { forma: 'estrutura1', descricao: '', grupo: 'estrutura', ok: false, erros: ['falta family_name'], avisos: [], soAvisos: false },
       frete('me2', ['User has not mode me1']),
       frete('gratis', ['User has not mode me1']),
     ];
@@ -380,5 +381,61 @@ describe('errosIguaisNoGrupo', () => {
 
   it('grupo com uma forma so nao conclui nada — nao ha comparacao possivel', () => {
     expect(errosIguaisNoGrupo([frete('unica', ['A'])], 'frete')).toEqual([]);
+  });
+});
+
+// --- v15 ---
+
+/** Resposta REAL do ML em 2026-09-24 para o MLB7418169626: 400, e todas as causas warning. */
+const respostaSoAvisos = {
+  message: 'Validation error',
+  error: 'validation_error',
+  status: 400,
+  cause: [
+    { type: 'warning', code: 'item.attributes.ignored', message: 'Attribute [PACKAGE_HEIGHT] ignored because it is not modifiable.' },
+    { type: 'warning', code: 'shipping.lost_me1_by_user', message: 'User has not mode me1' },
+    { type: 'warning', code: 'item.shipping.mandatory_free_shipping', message: 'Mandatory free shipping added' },
+  ],
+};
+
+describe('v15: atributos de embalagem', () => {
+  it('nao envia PACKAGE_* nem SHIPMENT_PACKING (o ML calcula e ignora)', () => {
+    const item = {
+      ...itemBase,
+      attributes: [
+        { id: 'BRAND', value_name: 'Generica' },
+        { id: 'PACKAGE_HEIGHT', value_name: '10 cm' },
+        { id: 'PACKAGE_WIDTH', value_name: '10 cm' },
+        { id: 'PACKAGE_LENGTH', value_name: '10 cm' },
+        { id: 'PACKAGE_WEIGHT', value_name: '300 g' },
+        { id: 'PACKAGE_DATA_SOURCE', value_id: '1' },
+        { id: 'SHIPMENT_PACKING', value_id: '2' },
+      ],
+    };
+    const { payload } = montarClone(item);
+    expect(payload.attributes.map((a: any) => a.id)).toEqual(['BRAND']);
+  });
+});
+
+describe('v15: avisosDaValidacao', () => {
+  it('frete gratis obrigatorio NAO avisa margem quando o original ja tinha frete gratis', () => {
+    const v = interpretarValidacao(400, respostaSoAvisos);
+    const avisos = avisosDaValidacao({ shipping: { free_shipping: true } }, v);
+    expect(avisos.some((a) => a.includes('margem'))).toBe(false);
+  });
+
+  it('frete gratis obrigatorio avisa margem quando o original NAO tinha', () => {
+    const v = interpretarValidacao(400, respostaSoAvisos);
+    const avisos = avisosDaValidacao({ shipping: { free_shipping: false } }, v);
+    expect(avisos.some((a) => a.includes('margem'))).toBe(true);
+  });
+
+  it('validacao so com avisos gera o aviso de que executar exige sondagem', () => {
+    const v = interpretarValidacao(400, respostaSoAvisos);
+    expect(avisosDaValidacao({ shipping: { free_shipping: true } }, v).some((a) => a.includes('sondar'))).toBe(true);
+  });
+
+  it('validacao limpa (2xx) nao gera aviso nenhum', () => {
+    expect(avisosDaValidacao({ shipping: {} }, interpretarValidacao(204, undefined))).toEqual([]);
   });
 });

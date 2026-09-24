@@ -228,7 +228,9 @@ async function descobrirFormas() {
       d.formas.map(f => '<tr>' +
         '<td>' + esc(f.forma) + '<div class="muted">' + esc(f.descricao) + '</div></td>' +
         '<td>' + (f.ok
-          ? '<b style="color:var(--green)">aceito</b>'
+          ? (f.soAvisos
+              ? '<b style="color:var(--green)">aceito</b> <span class="muted">com ' + (f.avisos || []).length + ' aviso(s)</span>'
+              : '<b style="color:var(--green)">aceito</b>')
           : ((f.errosProprios && f.errosProprios.length)
               ? '<span style="color:var(--red)">recusado</span><div class="muted">' + f.errosProprios.map(esc).join('<br>') + '</div>'
               : '<span style="color:#d79a2b">só mensagens gerais</span><div class="muted">nada específico deste formato</div>')) +
@@ -315,15 +317,27 @@ function render(s) {
       s.avisos.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul></div>';
   }
 
+  // v15: o ML manda `type` em cada causa. Erro bloqueia; aviso só informa.
+  const avisosMl = (s.validacao.avisos || []);
+  const listaAvisosMl = avisosMl.length
+    ? '<details style="margin-top:8px"><summary style="cursor:pointer">' + avisosMl.length + ' aviso(s) do Mercado Livre — não bloqueiam</summary>' +
+      '<ul style="margin:6px 0 0 18px;font-size:12px">' + avisosMl.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul></details>'
+    : '';
+  const cru = s.validacao.bruto ? '<details style="margin-top:8px"><summary style="cursor:pointer">Resposta crua do Mercado Livre</summary>' +
+    '<pre style="max-height:200px;font-size:11px">' + esc(JSON.stringify(s.validacao.bruto, null, 2)) + '</pre></details>' : '';
+
   if (!s.validacao.ok) {
-    h += '<div class="insight bad" style="margin-bottom:12px">❌ O Mercado Livre <b>rejeitou</b> o clone na validação:<ul style="margin:6px 0 0 18px">' +
+    h += '<div class="insight bad" style="margin-bottom:12px">❌ O Mercado Livre <b>rejeitou</b> o clone na validação. O que bloqueia:<ul style="margin:6px 0 0 18px">' +
       s.validacao.erros.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>' +
-      (s.validacao.bruto ? '<details style="margin-top:8px"><summary style="cursor:pointer">Resposta crua do Mercado Livre</summary>' +
-        '<pre style="max-height:200px;font-size:11px">' + esc(JSON.stringify(s.validacao.bruto, null, 2)) + '</pre></details>' : '') +
+      listaAvisosMl + cru +
       '<div style="margin-top:10px"><button class="secondary" onclick="descobrirFormas()">Descobrir qual formato o ML aceita</button>' +
       '<div class="muted" style="margin-top:4px">Testa algumas formas do anúncio contra a validação do ML. Não cria nada.</div>' +
       '<div id="formas"></div></div>' +
       '</div>';
+  } else if (s.validacao.soAvisos) {
+    h += '<div class="insight warn" style="margin-bottom:12px">⚠️ <b>Aprovado com avisos.</b> O Mercado Livre respondeu com status de erro, ' +
+      'mas nenhuma mensagem é erro — só avisos. Isso não garante que ele aceite criar o anúncio, então a <b>sondagem é obrigatória</b> ' +
+      'antes de executar. Nada foi criado ainda.' + listaAvisosMl + cru + '</div>';
   } else {
     h += '<div class="muted" style="margin-bottom:12px">✅ O Mercado Livre validou o clone. Nada foi criado ainda.</div>';
   }
@@ -357,6 +371,9 @@ function render(s) {
   h += '<div class="row" id="acoesSondagem" style="justify-content:flex-end"><button class="secondary" onclick="fecharModal()">Cancelar</button>';
   if (!s.escritaHabilitada) {
     h += '<span class="muted">Escrita desligada neste serviço (<code>RECREATE_ENABLED</code>).</span>';
+  } else if (s.validacao.ok && s.exigeSondagem) {
+    // v15: validação só com avisos — o servidor recusa executar sem sondar, então o botão nem aparece.
+    h += '<button onclick="sondar()">Sondar (obrigatório)</button>';
   } else if (s.validacao.ok) {
     // A sondagem vem ANTES do botão de recriar: ela é o que transforma a aposta em decisão.
     h += '<button onclick="sondar()">Sondar antes (recomendado)</button>' +
@@ -422,21 +439,7 @@ async function executar() {
   }
 }
 
-/**
- * Deep-link ?itemId=MLBxxxxxxxxxx — usado pelo botão "Recriar →" da fila do ml-analytics.
- * Preenche o campo manual e já dispara a simulação, pra não obrigar a digitar o MLB de novo.
- */
-function verificarDeepLink() {
-  const params = new URLSearchParams(location.search);
-  const itemId = (params.get('itemId') || '').trim().toUpperCase();
-  if (!itemId) return;
-  const campo = document.getElementById('mlbInput');
-  if (campo) campo.value = itemId;
-  simular(itemId);
-}
-
 carregar();
-verificarDeepLink();
 </script>
 </body>
 </html>

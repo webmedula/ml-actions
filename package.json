@@ -1,6 +1,6 @@
 {
   "name": "ml-actions",
-  "version": "1.0.0",
+  "version": "1.15.0",
   "private": true,
   "description": "Acoes de ESCRITA no Mercado Livre (recriacao de anuncio). Separado do ml-analytics de proposito.",
   "main": "dist/index.js",

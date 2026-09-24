@@ -61,6 +61,9 @@ casos como `depende_do_user_product` em vez de prometer que recriar resolve.
    rollback automático errado no meio da virada é pior que um estado conhecido e registrado.
 6. Todo histórico vai pra `data/recreations.json` **com o snapshot do anúncio antigo**, que é o que
    permite reverter à mão.
+7. *(v15)* Se o ML aprovou o clone **só com avisos** (responde 400, mas nenhuma causa é `error`),
+   executar exige uma **sondagem** antes. "Passou com avisos" é evidência mais fraca que "passou":
+   a sondagem cria o anúncio pausado e prova que o ML aceita, sem tocar no original.
 
 ## Configurar
 
@@ -126,3 +129,27 @@ Mercado Livre uma vez.
 **O vínculo SKU ↔ MLB no Tiny.** Depois de uma recriação bem-sucedida, o painel avisa — mas quem
 atualiza é você. Enquanto não atualizar, estoque, preço e emissão de NF param de sincronizar
 naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviço que emite nota.
+
+## Histórico de versões
+
+### actions v15 (2026-09-24)
+
+Motivo: o `MLB7418169626` ficou travado em "O Mercado Livre rejeitou o clone" — mas as 8 mensagens
+eram **todas `warning`**. O `/items/validate` responde `400 validation_error` mesmo sem nenhum erro
+real, e a v14 descartava o `type` de cada causa, então aviso e recusa eram indistinguíveis.
+
+- **Erro × aviso.** O `type` das causas agora é preservado. `ok` passa a ser "nenhuma causa é
+  `error`". Regra restrita: só vale para `400` com `error: "validation_error"`, com causas, todas
+  `warning`. Causa sem `type`, outro status ou 400 sem causas continuam sendo recusa.
+- **Painel.** Três estados: ✅ validado · ⚠️ aprovado com avisos · ❌ rejeitado (mostra só o que
+  bloqueia; avisos ficam num bloco à parte).
+- **Salvaguarda 7.** Aprovado só com avisos → executar exige sondagem. O botão "Recriar sem sondar"
+  some e o servidor recusa pulando etapa.
+- **Atributos de embalagem.** `PACKAGE_*` e `SHIPMENT_PACKING` não são mais enviados (o ML calcula
+  e ignorava, gerando 6 avisos).
+- **Frete grátis obrigatório.** O aviso de margem só aparece se o original **não** tinha frete
+  grátis.
+- **"Descobrir formato".** Usa o `type`: formas com só avisos aparecem como aceitas.
+- Testado e descartado: tirar `shipping.dimensions` não muda nada — o aviso `lost_me1_by_user`
+  vem da conta, não do payload.
+- Testes: 64 → 82.

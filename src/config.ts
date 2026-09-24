@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'actions v15 (2026-09-23)',
+  appVersion: 'actions v15 (2026-09-24)',
 
   port: Number(process.env.PORT || 3011),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
