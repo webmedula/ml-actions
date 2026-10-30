@@ -132,6 +132,28 @@ naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviç
 
 ## Histórico de versões
 
+### actions v17 (2026-10-30)
+
+Motivo: o `MLB6198163182` (2 variações, 438 em estoque) foi recusado com `family_name` obrigatório e
+`variations` inválida com `family_name`. A sonda de forma ("Descobrir formato") provou que o ML
+**aceita família sem variações** e recusa família com variações.
+
+- **Um anúncio por variação.** Com nome de família, o clone deixa de levar `variations`: cada
+  variação vira um anúncio próprio, com os atributos (`attribute_combinations`), preço, fotos e SKU
+  dela, todos com o mesmo `family_name`. Sem família, nada muda em relação à v16.
+- **Família automática.** Se o ML recusar por falta de `family_name` e você não informou um, a
+  simulação refaz usando o título do original (até 60 caracteres) e avisa. O campo continua editável.
+- **Estoque por variação.** A virada relê o estoque de cada variação e ativa cada anúncio novo com o
+  dela. Variação sem estoque no original fica **pausada**. O painel mostra a tabela por variação.
+- **Sondagem e descarte em lote.** A sondagem cria um teste pausado por variação (se um falhar, fecha
+  os já criados) e só conclui "zera" se **todos** receberam um produto do usuário diferente. Executar
+  reaproveita todos os testes. Descartar fecha todos.
+- **Falha parcial.** Se a criação do 2º anúncio falhar, o 1º fica no histórico (`itensNovos`) como
+  `parcial` e o antigo não é tocado.
+- Não mudou: frete grátis continua **desligado** por padrão; a modalidade `me2` continua declarada.
+- Depois de executar, é preciso vincular **cada SKU/MLB novo** no Tiny (passo manual de sempre).
+- Testes: 86 → 106.
+
 ### actions v16 (2026-09-24)
 
 Motivo: no `MLB7418169626`, duas sondagens (uma com nome de família diferente) caíram no mesmo

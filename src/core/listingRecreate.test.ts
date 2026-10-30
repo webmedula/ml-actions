@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avaliacoesParaRecuperar, avisosDaValidacao, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone } from './listingRecreate';
+import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia } from './listingRecreate';
 import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
@@ -494,5 +494,125 @@ describe('v16: resumirProdutoDoUsuario', () => {
 
   it('MLBU sem atributos nao preve nada', () => {
     expect(resumirProdutoDoUsuario({ id: 'X', attributes: [] }, { ids: [], total: 0 }, {}).previsao).toBe('incerto');
+  });
+});
+
+// --- v17: um anuncio por variacao (modelo de familia) ---
+
+const itemComVariacoes = {
+  ...itemBase,
+  variations: [
+    {
+      id: 111, available_quantity: 300, price: 41.9,
+      attribute_combinations: [{ id: 'VOLTAGE', name: 'Voltagem', value_name: '12V' }],
+      attributes: [{ id: 'SELLER_SKU', value_name: 'LD-12' }],
+      picture_ids: ['PIC1'], seller_custom_field: 'SKU12',
+    },
+    {
+      id: 222, available_quantity: 138, price: 44.9,
+      attribute_combinations: [{ id: 'VOLTAGE', name: 'Voltagem', value_name: '24V' }],
+      picture_ids: ['PIC2'],
+    },
+  ],
+};
+
+describe('v17: montarClones', () => {
+  it('sem familia, devolve um clone so, com as variacoes dentro (comportamento da v16)', () => {
+    const { clones } = montarClones(itemComVariacoes);
+    expect(clones).toHaveLength(1);
+    expect(clones[0].payload.variations).toHaveLength(2);
+    expect(clones[0].payload).not.toHaveProperty('family_name');
+  });
+
+  it('com familia, cria um anuncio por variacao e nenhum leva variations nem title', () => {
+    const { clones } = montarClones(itemComVariacoes, { familyName: 'Lanterna Diamond 3' });
+    expect(clones).toHaveLength(2);
+    for (const c of clones) {
+      expect(c.payload).not.toHaveProperty('variations');
+      expect(c.payload).not.toHaveProperty('title');
+      expect(c.payload.family_name).toBe('Lanterna Diamond 3');
+      expect(c.payload.available_quantity).toBe(1);
+      expect(c.payload.status).toBe('paused');
+    }
+  });
+
+  it('cada anuncio leva os atributos, preco, fotos e SKU da sua variacao', () => {
+    const { clones } = montarClones(itemComVariacoes, { familyName: 'Lanterna Diamond 3' });
+    const [a, b] = clones;
+    expect(a.payload.attributes).toContainEqual({ id: 'VOLTAGE', value_name: '12V' });
+    expect(a.payload.attributes).toContainEqual({ id: 'SELLER_SKU', value_name: 'LD-12' });
+    expect(a.payload.attributes).toContainEqual({ id: 'BRAND', value_name: 'Generica' });
+    expect(a.payload.price).toBe(41.9);
+    expect(a.payload.pictures).toEqual([{ id: 'PIC1' }]);
+    expect(a.payload.seller_custom_field).toBe('SKU12');
+    expect(b.payload.attributes).toContainEqual({ id: 'VOLTAGE', value_name: '24V' });
+    expect(b.payload.price).toBe(44.9);
+    expect(b.payload.pictures).toEqual([{ id: 'PIC2' }]);
+  });
+
+  it('guarda o estoque original de cada variacao e o rotulo', () => {
+    const { clones } = montarClones(itemComVariacoes, { familyName: 'X' });
+    expect(clones.map((c) => c.estoqueOriginal)).toEqual([300, 138]);
+    expect(clones[0].rotulo).toBe('Voltagem: 12V');
+    expect(clones[0].variationId).toBe(111);
+  });
+
+  it('troca o aviso antigo de variacoes pelo de anuncios separados', () => {
+    const { avisos } = montarClones(itemComVariacoes, { familyName: 'X' });
+    const texto = avisos.join(' ');
+    expect(texto).toContain('serao criados 2 anuncios');
+    expect(texto).not.toContain('O estoque de cada uma comeca em 1');
+  });
+
+  it('avisa quando uma variacao esta sem estoque (o anuncio novo ficaria pausado)', () => {
+    const item = { ...itemComVariacoes, variations: [{ ...itemComVariacoes.variations[0], available_quantity: 0 }, itemComVariacoes.variations[1]] };
+    const { avisos } = montarClones(item, { familyName: 'X' });
+    expect(avisos.join(' ')).toContain('PAUSADOS');
+  });
+
+  it('anuncio sem variacao, mesmo com familia, continua gerando um clone so', () => {
+    const { clones } = montarClones(itemBase, { familyName: 'X' });
+    expect(clones).toHaveLength(1);
+    expect(clones[0].variationId).toBeNull();
+    expect(clones[0].estoqueOriginal).toBe(25);
+  });
+});
+
+describe('v17: precisaDeFamilia', () => {
+  it('detecta a recusa do ML por falta de family_name', () => {
+    const v = interpretarValidacao(400, { error: 'validation_error', cause: [{ type: 'error', message: 'The body does not contains some or none of the following properties [family_name]' }] });
+    expect(precisaDeFamilia(v)).toBe(true);
+  });
+  it('nao dispara quando passou', () => {
+    expect(precisaDeFamilia(interpretarValidacao(204, undefined))).toBe(false);
+  });
+  it('nao dispara para outro erro', () => {
+    const v = interpretarValidacao(400, { error: 'validation_error', cause: [{ type: 'error', message: 'item.category_id invalid' }] });
+    expect(precisaDeFamilia(v)).toBe(false);
+  });
+});
+
+describe('v17: agregarValidacoes e combinarVeredictos', () => {
+  const ok = interpretarValidacao(204, undefined);
+  const ruim = interpretarValidacao(400, { error: 'validation_error', cause: [{ type: 'error', message: 'campo X invalido' }] });
+  const avisos = interpretarValidacao(400, { error: 'validation_error', cause: [{ type: 'warning', message: 'aviso Y' }] });
+
+  it('passa so quando TODOS passam', () => {
+    expect(agregarValidacoes([ok, ok]).ok).toBe(true);
+    expect(agregarValidacoes([ok, ruim]).ok).toBe(false);
+  });
+  it('junta os erros sem repetir', () => {
+    expect(agregarValidacoes([ruim, ruim]).erros).toEqual(['campo X invalido']);
+  });
+  it('se algum passou so com avisos, o conjunto exige sondagem', () => {
+    const r = agregarValidacoes([ok, avisos]);
+    expect(r.ok).toBe(true);
+    expect(r.soAvisos).toBe(true);
+  });
+  it('so zera a nota se TODOS os anuncios de teste zeram', () => {
+    expect(combinarVeredictos(['zera', 'zera'])).toBe('zera');
+    expect(combinarVeredictos(['zera', 'nao_zera'])).toBe('nao_zera');
+    expect(combinarVeredictos(['zera', 'indeterminado'])).toBe('indeterminado');
+    expect(combinarVeredictos([])).toBe('indeterminado');
   });
 });
