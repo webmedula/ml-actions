@@ -298,6 +298,17 @@ function render(s) {
     '<tr><td>Estoque a transferir</td><td class="num">' + s.estoqueAtual + '</td></tr>' +
     '</tbody></table>';
 
+  // v17: no modelo de família cada variação vira um anúncio próprio.
+  const itens = s.payloads || [];
+  if (itens.length > 1) {
+    h += '<div class="panel" style="background:var(--panel-2);margin-bottom:14px">' +
+      '<div class="muted" style="margin-bottom:6px">Serão criados <b>' + itens.length + ' anúncios</b> (um por variação), todos com o mesmo nome de família</div>' +
+      '<table><thead><tr><th>Variação</th><th class="num">Preço</th><th class="num">Estoque a transferir</th></tr></thead><tbody>' +
+      itens.map(c => '<tr><td>' + esc(c.rotulo) + '</td><td class="num">' + (c.payload.price != null ? esc(String(c.payload.price)) : '—') +
+        '</td><td class="num">' + c.estoqueOriginal + (c.estoqueOriginal <= 0 ? ' <span class="muted">(fica pausado)</span>' : '') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  }
+
   // O contraponto honesto, antes do botão: quantas notas 5 resolveriam sem jogar o histórico fora.
   if (s.avaliacoesParaRecuperar != null) {
     const n = s.avaliacoesParaRecuperar;
@@ -363,7 +374,7 @@ function render(s) {
   }
 
   h += '<details style="margin-bottom:14px"><summary class="muted" style="cursor:pointer">Ver o payload que seria enviado</summary>' +
-    '<pre style="max-height:220px;font-size:11px">' + esc(JSON.stringify(s.payload, null, 2)) + '</pre></details>';
+    '<pre style="max-height:220px;font-size:11px">' + esc(JSON.stringify((s.payloads && s.payloads.length > 1) ? s.payloads.map(c => c.payload) : s.payload, null, 2)) + '</pre></details>';
 
   // O family_name e a alavanca: mesmo nome tende a reagrupar no mesmo MLBU (nota vem junto),
   // nome diferente tende a criar um agrupamento novo (nota zera). Quem confirma e a sondagem.
@@ -379,7 +390,9 @@ function render(s) {
       '<button class="secondary" onclick="resimular()">Re-simular</button>' +
     '</div>' +
     '<div class="muted" style="margin-top:6px">' +
-      (!s.familyName
+      (s.familyName && !s.familyNameOriginal
+        ? 'O original não usa família, mas o Mercado Livre exige nome de família neste tipo de anúncio. Sugeri o título do original — o <b>título do anúncio novo passa a ser gerado a partir deste nome</b>. Ao editar, clique em Re-simular.'
+        : !s.familyName
         ? 'Este anúncio não usa família. O título vai igual ao original. Se preencher um nome aqui, o Mercado Livre passa a gerar o título a partir dele.'
         : igual
           ? 'Igual ao original — o ML tende a reagrupar no mesmo produto do usuário, e a nota viria junto. O título continua o mesmo.'
@@ -416,7 +429,10 @@ async function sondar() {
 
     box.innerHTML = '<div class="' + classe + '" style="margin-bottom:12px">' + icone + ' ' + esc(r.explicacao) +
       '<div class="muted" style="margin-top:8px">Original: <b>' + esc(r.userProductIdOriginal || '—') + '</b> · ' +
-      'Teste (' + esc(r.itemNovo) + '): <b>' + esc(r.userProductIdNovo || '—') + '</b> · fonte: ' + esc(r.fonte) + '</div></div>';
+      (r.itens && r.itens.length > 1
+        ? 'Testes: ' + r.itens.map(i => esc(i.itemNovo) + (i.rotulo ? ' (' + esc(i.rotulo) + ')' : '') + ': <b>' + esc(i.userProductIdNovo || '—') + '</b>').join(' · ')
+        : 'Teste (' + esc(r.itemNovo) + '): <b>' + esc(r.userProductIdNovo || '—') + '</b>') +
+      ' · fonte: ' + esc(r.fonte) + '</div></div>';
 
     const acoes = document.getElementById('acoesSondagem');
     if (acoes) {
@@ -450,9 +466,12 @@ async function executar() {
   try {
     const r = await api('/api/listings/recreate/execute', { token: sim.token, confirmacao: 'RECRIAR' });
     b.innerHTML = (r.status === 'sucesso'
-      ? '<div class="insight">✅ Pronto. Anúncio novo: <b>' + esc(r.itemNovo) + '</b>. O antigo (' + esc(r.itemAntigo) + ') foi fechado.<br><br>' +
-        '<b>Falta um passo fora daqui:</b> atualizar o vínculo desse SKU no Tiny para o MLB novo, senão estoque, preço e nota fiscal param de sincronizar.</div>'
-      : '<div class="insight bad">⚠️ Parou em "<b>' + esc(r.etapaQueFalhou || '—') + '</b>": ' + esc(r.erro || '') + '<br><br>Anúncio novo: <b>' + esc(r.itemNovo || 'não criado') + '</b> · antigo: <b>' + esc(r.itemAntigo) + '</b>. Confira os dois no Mercado Livre — o serviço não desfaz nada sozinho.</div>')
+      ? '<div class="insight">✅ Pronto. ' + ((r.itensNovos && r.itensNovos.length > 1)
+          ? 'Anúncios novos: ' + r.itensNovos.map(i => '<b>' + esc(i.id) + '</b>' + (i.rotulo ? ' (' + esc(i.rotulo) + ', estoque ' + i.estoque + ')' : '')).join(' · ')
+          : 'Anúncio novo: <b>' + esc(r.itemNovo) + '</b>') +
+        '. O antigo (' + esc(r.itemAntigo) + ') foi fechado.<br><br>' +
+        '<b>Falta um passo fora daqui:</b> atualizar o vínculo do(s) SKU(s) no Tiny para o(s) MLB(s) novo(s), senão estoque, preço e nota fiscal param de sincronizar.</div>'
+      : '<div class="insight bad">⚠️ Parou em "<b>' + esc(r.etapaQueFalhou || '—') + '</b>": ' + esc(r.erro || '') + '<br><br>Anúncio(s) novo(s): <b>' + esc(((r.itensNovos || []).map(i => i.id).join(', ')) || r.itemNovo || 'não criado') + '</b> · antigo: <b>' + esc(r.itemAntigo) + '</b>. Confira os dois no Mercado Livre — o serviço não desfaz nada sozinho.</div>')
       + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="fecharModal();carregar()">Fechar</button></div>';
   } catch (e) {
     b.innerHTML = '<div class="insight bad">Falhou: ' + esc(e.message) + '</div>' +

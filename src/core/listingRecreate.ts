@@ -312,6 +312,138 @@ export function montarClone(item: any, opts: OpcoesClone = {}): ResultadoClone {
   return { payload, avisos };
 }
 
+// --- v17: um anuncio por variacao (modelo de familia) ---
+
+/** Um anuncio a criar. Anuncio sem variacao gera um; anuncio com N variacoes gera N. */
+export interface ClonePayload {
+  /** Texto curto que identifica a variacao (ex.: "Cor: Preto / Voltagem: 12V"). Vazio quando nao ha variacao. */
+  rotulo: string;
+  payload: Record<string, any>;
+  /** Estoque que este anuncio tinha no original (da variacao, ou o total quando nao ha variacao). */
+  estoqueOriginal: number;
+  /** id da variacao no anuncio original — serve pra reler o estoque na hora de executar. */
+  variationId: number | string | null;
+}
+
+export interface ResultadoClones {
+  clones: ClonePayload[];
+  avisos: string[];
+}
+
+function rotuloDaVariacao(v: any, indice: number): string {
+  const comb = Array.isArray(v?.attribute_combinations) ? v.attribute_combinations : [];
+  const partes = comb
+    .map((a: any) => {
+      const valor = a?.value_name ?? a?.value_id;
+      return valor == null ? null : `${a?.name || a?.id}: ${valor}`;
+    })
+    .filter(Boolean);
+  return partes.length ? partes.join(' / ') : `Variacao ${indice + 1}`;
+}
+
+/** Atributos do item + os da variacao. Na colisao de id, o da variacao vence. */
+function mesclarAtributos(base: any[] | undefined, ...extras: Array<any[] | undefined>): any[] | undefined {
+  const mapa = new Map<string, any>();
+  for (const a of base || []) mapa.set(a.id, a);
+  for (const lista of extras) for (const a of lista || []) mapa.set(a.id, a);
+  const out = [...mapa.values()];
+  return out.length ? out : undefined;
+}
+
+/**
+ * Monta TODOS os anuncios que a recriacao cria.
+ *
+ * No modelo de familia o ML nao aceita `variations`: cada variacao vira um anuncio proprio, e o ML
+ * agrupa todos pelo mesmo `family_name`. Confirmado pela sonda de forma em 2026-10-30 (MLB6198163182):
+ * familia + variacoes juntas = recusado; familia sem variacoes = aceito.
+ *
+ * Sem familia o comportamento e o de sempre: um clone, com as variacoes dentro.
+ */
+export function montarClones(item: any, opts: OpcoesClone = {}): ResultadoClones {
+  const { payload: base, avisos } = montarClone(item, opts);
+  const variacoes: any[] = Array.isArray(item?.variations) ? item.variations : [];
+
+  if (!base.family_name || variacoes.length === 0) {
+    return {
+      clones: [{
+        rotulo: '',
+        payload: base,
+        estoqueOriginal: Number(item?.available_quantity || 0),
+        variationId: null,
+      }],
+      avisos,
+    };
+  }
+
+  // O aviso "tem N variacoes, estoque comeca em 1" deixa de valer: nao ha variacao no anuncio novo.
+  const avisosFinais = avisos.filter((a) => !a.includes('variacao(oes)'));
+
+  const { variations: _descartada, ...semVariacoes } = base;
+  const clones: ClonePayload[] = variacoes.map((v, i) => {
+    const payload: Record<string, any> = { ...semVariacoes };
+    const attrs = mesclarAtributos(
+      payload.attributes,
+      limparAtributos(v?.attribute_combinations),
+      limparAtributos(v?.attributes),
+    );
+    if (attrs) payload.attributes = attrs;
+    if (v?.price != null) payload.price = v.price;
+    if (v?.seller_custom_field != null) payload.seller_custom_field = v.seller_custom_field;
+    if (Array.isArray(v?.picture_ids) && v.picture_ids.length) {
+      payload.pictures = v.picture_ids.map((id: string) => ({ id }));
+    }
+    return {
+      rotulo: rotuloDaVariacao(v, i),
+      payload,
+      estoqueOriginal: Number(v?.available_quantity || 0),
+      variationId: v?.id ?? null,
+    };
+  });
+
+  avisosFinais.push(
+    `O anuncio tem ${clones.length} variacao(oes). No modelo de familia o ML nao aceita variacoes dentro do anuncio: ` +
+    `serao criados ${clones.length} anuncios separados, agrupados pelo mesmo nome de familia. Cada um nasce com estoque ` +
+    'minimo e recebe o estoque da sua variacao na virada.',
+  );
+  const semEstoque = clones.filter((c) => c.estoqueOriginal <= 0);
+  if (semEstoque.length) {
+    avisosFinais.push(
+      `Sem estoque no original: ${semEstoque.map((c) => c.rotulo).join('; ')}. Esse(s) anuncio(s) novo(s) ficam PAUSADOS na virada.`,
+    );
+  }
+  return { clones, avisos: avisosFinais };
+}
+
+/** O ML recusou por falta de familia? Funcao PURA. */
+export function precisaDeFamilia(validacao: ResultadoValidacao): boolean {
+  return !validacao.ok && validacao.erros.some((e) => /family_name/i.test(e));
+}
+
+/** Junta a validacao de varios clones numa so: passa quando TODOS passam. Funcao PURA. */
+export function agregarValidacoes(lista: ResultadoValidacao[]): ResultadoValidacao {
+  if (lista.length === 1) return lista[0];
+  const unicos = (xs: string[]) => [...new Set(xs)];
+  const ok = lista.every((v) => v.ok);
+  const bruto = lista.find((v) => !v.ok)?.bruto ?? lista[0]?.bruto;
+  return {
+    ok,
+    soAvisos: ok && lista.some((v) => v.soAvisos),
+    erros: unicos(lista.flatMap((v) => v.erros)),
+    avisos: unicos(lista.flatMap((v) => v.avisos)),
+    causas: lista.flatMap((v) => v.causas),
+    status: lista.find((v) => !v.ok)?.status ?? lista[0]?.status,
+    bruto,
+  };
+}
+
+/** Veredicto de varios anuncios de teste: so "zera" se TODOS zeram. Funcao PURA. */
+export function combinarVeredictos(vs: VeredictoSondagem[]): VeredictoSondagem {
+  if (vs.length === 0) return 'indeterminado';
+  if (vs.includes('nao_zera')) return 'nao_zera';
+  if (vs.includes('indeterminado')) return 'indeterminado';
+  return 'zera';
+}
+
 /** Quantas avaliacoes 5 estrelas seriam necessarias pra subir a nota atual ate o limite.
  * x >= N * (limite - nota) / (5 - limite). Devolve null quando ja esta acima do limite. */
 export function avaliacoesParaRecuperar(nota: number | null, total: number | null, limite: number): number | null {
@@ -340,6 +472,8 @@ export interface Simulacao {
   familyName: string | null;
   familyNameOriginal: string | null;
   payload: Record<string, any>;
+  /** v17: TODOS os anuncios que seriam criados (1 por variacao no modelo de familia). `payload` e o primeiro. */
+  payloads: ClonePayload[];
   avisos: string[];
   /** Resultado do POST /items/validate no ML. `bruto` traz a resposta crua quando ele recusa. */
   validacao: ResultadoValidacao;
@@ -359,7 +493,16 @@ export interface Simulacao {
 
 export type VeredictoSondagem = 'zera' | 'nao_zera' | 'indeterminado';
 
+export interface ItemDeSondagem {
+  itemNovo: string;
+  rotulo: string;
+  userProductIdNovo: string | null;
+  veredicto: VeredictoSondagem;
+}
+
 export interface Sondagem {
+  /** v17: todos os anuncios de teste (um por variacao). `itemNovo` e o primeiro. */
+  itens: ItemDeSondagem[];
   /** O anuncio criado pela sondagem: pausado, estoque 1, sem descricao ainda. */
   itemNovo: string;
   userProductIdOriginal: string | null;
@@ -588,8 +731,24 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     throw err;
   }
 
-  const { payload, avisos } = montarClone(item, opts);
-  const validacao = await validateItemPayload(payload);
+  let { clones, avisos } = montarClones(item, opts);
+  let validacao = agregarValidacoes(await Promise.all(clones.map((c) => validateItemPayload(c.payload))));
+
+  // v17: o ML exigiu familia e o operador nao informou nenhuma. Usa o titulo do original como nome
+  // da familia e refaz — foi o que a sonda de forma provou aceito em 2026-10-30 (MLB6198163182).
+  if (precisaDeFamilia(validacao) && !(opts.familyName || '').trim() && !item?.family_name) {
+    const familia = String(item.title || '').slice(0, 60);
+    const refeito = montarClones(item, { ...opts, familyName: familia });
+    const validacao2 = agregarValidacoes(await Promise.all(refeito.clones.map((c) => validateItemPayload(c.payload))));
+    clones = refeito.clones;
+    avisos = [
+      `O Mercado Livre exige nome de familia nesta categoria. Usei o titulo do original ("${familia}") como nome — ` +
+      'edite abaixo se quiser outro.',
+      ...refeito.avisos,
+    ];
+    validacao = validacao2;
+  }
+  const payload = clones[0].payload;
   avisos.push(...avisosDaValidacao(item, validacao));
   const rating = await getRating(id).catch(() => null);
   const { userProductId: userProductIdOriginal } = await getUserProductId(id, item);
@@ -614,6 +773,7 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     familyName: payload.family_name ?? null,
     familyNameOriginal: item.family_name ?? null,
     payload,
+    payloads: clones,
     avisos,
     validacao,
     exigeSondagem: validacao.soAvisos,
@@ -638,6 +798,8 @@ export interface RegistroRecriacao {
   token: string;
   itemAntigo: string;
   itemNovo: string | null;
+  /** v17: todos os anuncios criados (um por variacao). `itemNovo` e o primeiro. */
+  itensNovos?: Array<{ id: string; rotulo: string; estoque: number }>;
   titulo: string;
   notaAntiga: number | null;
   vendasPerdidas: number;
@@ -705,18 +867,48 @@ export async function sondarRecriacao(token: string): Promise<Sondagem> {
   }
   if (sim.sondagem) return sim.sondagem; // ja sondado: nao cria um segundo anuncio de teste
 
-  const novo = await createItem(sim.payload);
-  const novoId: string | undefined = novo?.id;
-  if (!novoId) throw new Error('O ML nao devolveu o id do anuncio de teste.');
-  logger.info(`[SONDAGEM] Anuncio de teste ${novoId} criado (pausado) a partir de ${sim.itemId}.`);
+  // v17: um anuncio de teste por variacao. Se um falhar no meio, fecha os que ja nasceram — sao so
+  // testes pausados, entao limpar e seguro e evita deixar lixo no ML.
+  const criados: Array<{ id: string; clone: ClonePayload; novo: any }> = [];
+  try {
+    for (const clone of sim.payloads) {
+      const novo = await createItem(clone.payload);
+      if (!novo?.id) throw new Error('O ML nao devolveu o id do anuncio de teste.');
+      criados.push({ id: novo.id, clone, novo });
+      logger.info(`[SONDAGEM] Anuncio de teste ${novo.id} criado (pausado) a partir de ${sim.itemId}${clone.rotulo ? ` [${clone.rotulo}]` : ''}.`);
+    }
+  } catch (err) {
+    for (const c of criados) {
+      await closeItem(c.id).catch(() => undefined);
+      await deleteItem(c.id).catch(() => undefined);
+    }
+    throw err;
+  }
 
-  const { userProductId: userProductIdNovo, fonte } = await getUserProductId(novoId, novo);
-  const { veredicto, explicacao } = interpretarSondagem(sim.userProductIdOriginal, userProductIdNovo);
+  const itens: ItemDeSondagem[] = [];
+  let fonte = '';
+  for (const c of criados) {
+    const { userProductId, fonte: f } = await getUserProductId(c.id, c.novo);
+    fonte = fonte || f;
+    const { veredicto: v } = interpretarSondagem(sim.userProductIdOriginal, userProductId);
+    itens.push({ itemNovo: c.id, rotulo: c.clone.rotulo, userProductIdNovo: userProductId, veredicto: v });
+  }
+
+  const veredicto = combinarVeredictos(itens.map((i) => i.veredicto));
+  const primeiro = itens[0];
+  let { explicacao } = interpretarSondagem(sim.userProductIdOriginal, primeiro.userProductIdNovo);
+  if (itens.length > 1) {
+    explicacao =
+      `${itens.length} anuncios de teste criados. ` +
+      itens.map((i) => `${i.rotulo || i.itemNovo}: ${i.userProductIdNovo || '?'}`).join(' · ') +
+      `. Resultado geral: ${veredicto === 'zera' ? 'todos receberam produto do usuario diferente do original — recriar zera a nota.' : veredicto === 'nao_zera' ? 'pelo menos um caiu no MESMO produto do usuario do original — a nota dele viria junto.' : 'o ML nao informou o produto de algum deles — nao da pra concluir.'}`;
+  }
 
   const sondagem: Sondagem = {
-    itemNovo: novoId,
+    itens,
+    itemNovo: primeiro.itemNovo,
     userProductIdOriginal: sim.userProductIdOriginal,
-    userProductIdNovo,
+    userProductIdNovo: primeiro.userProductIdNovo,
     fonte,
     veredicto,
     explicacao,
@@ -725,7 +917,7 @@ export async function sondarRecriacao(token: string): Promise<Sondagem> {
 
   sim.sondagem = sondagem;
   simulacoes.set(token, sim);
-  logger.info(`[SONDAGEM] ${sim.itemId}: original=${sim.userProductIdOriginal} novo=${userProductIdNovo} -> ${veredicto}`);
+  logger.info(`[SONDAGEM] ${sim.itemId}: original=${sim.userProductIdOriginal} novos=${itens.map((i) => i.userProductIdNovo).join(',')} -> ${veredicto}`);
   return sondagem;
 }
 
@@ -734,16 +926,19 @@ export async function descartarSondagem(token: string): Promise<{ descartado: st
   const sim = getSimulacao(token);
   if (!sim?.sondagem) throw new RecriacaoBloqueada('Nao ha sondagem pendente para este token.');
 
-  const id = sim.sondagem.itemNovo;
-  await closeItem(id);
-  let apagado = false;
-  try {
-    await deleteItem(id);
-    apagado = true;
-  } catch (err: any) {
-    // Fechado ja basta: nao aparece pra ninguem. O delete e so limpeza.
-    logger.warn(`[SONDAGEM] ${id} fechado, mas nao consegui marcar como deletado:`, err?.message || err);
+  const ids = sim.sondagem.itens.map((i) => i.itemNovo);
+  let apagado = true;
+  for (const id of ids) {
+    await closeItem(id);
+    try {
+      await deleteItem(id);
+    } catch (err: any) {
+      // Fechado ja basta: nao aparece pra ninguem. O delete e so limpeza.
+      apagado = false;
+      logger.warn(`[SONDAGEM] ${id} fechado, mas nao consegui marcar como deletado:`, err?.message || err);
+    }
   }
+  const id = ids.join(', ');
 
   delete sim.sondagem;
   simulacoes.set(token, sim);
@@ -811,36 +1006,57 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
     snapshot,
   };
 
+  // Estoque de cada anuncio novo: relido do snapshot (por id de variacao) — o simulado pode estar velho.
+  const estoqueDe = (c: ClonePayload): number => {
+    if (c.variationId == null) return Math.max(1, estoqueReal);
+    const v = (snapshot.variations || []).find((x: any) => String(x.id) === String(c.variationId));
+    return Number(v?.available_quantity ?? c.estoqueOriginal ?? 0);
+  };
+  registro.estoqueTransferido = sim.payloads.reduce((t, c) => t + (c.variationId == null ? estoqueReal : estoqueDe(c)), 0);
+
   let etapa = 'criar anuncio novo';
   try {
+    const ids: string[] = [];
     if (sim.sondagem) {
-      // A sondagem ja criou o anuncio (pausado, estoque 1) e confirmou que a nota zera.
-      // Reaproveita: sondar e depois executar NAO pode gerar dois anuncios.
-      registro.itemNovo = sim.sondagem.itemNovo;
+      // A sondagem ja criou os anuncios (pausados, estoque 1) e confirmou que a nota zera.
+      // Reaproveita: sondar e depois executar NAO pode gerar anuncios duplicados.
+      ids.push(...sim.sondagem.itens.map((i) => i.itemNovo));
       registro.sondagem = sim.sondagem;
-      logger.info(`[RECRIAR] Reaproveitando o anuncio ${registro.itemNovo} criado pela sondagem.`);
+      logger.info(`[RECRIAR] Reaproveitando ${ids.join(', ')} criado(s) pela sondagem.`);
     } else {
-      const novo = await createItem(sim.payload);
-      registro.itemNovo = novo?.id ?? null;
-      if (!registro.itemNovo) throw new Error('O ML nao devolveu o id do anuncio criado.');
-      logger.info(`[RECRIAR] Anuncio novo ${registro.itemNovo} criado a partir de ${sim.itemId}.`);
+      for (const clone of sim.payloads) {
+        const novo = await createItem(clone.payload);
+        if (!novo?.id) throw new Error('O ML nao devolveu o id do anuncio criado.');
+        ids.push(novo.id);
+        // Registrado a cada criacao: se o 2o falhar, o 1o ja esta no ar e precisa aparecer no historico.
+        registro.itemNovo = registro.itemNovo ?? novo.id;
+        registro.itensNovos = [...(registro.itensNovos || []), { id: novo.id, rotulo: clone.rotulo, estoque: estoqueDe(clone) }];
+        registro.status = 'parcial';
+        logger.info(`[RECRIAR] Anuncio novo ${novo.id} criado a partir de ${sim.itemId}${clone.rotulo ? ` [${clone.rotulo}]` : ''}.`);
+      }
     }
+    registro.itemNovo = ids[0] ?? null;
+    registro.itensNovos = ids.map((id, i) => ({ id, rotulo: sim.payloads[i].rotulo, estoque: estoqueDe(sim.payloads[i]) }));
 
-    // A partir daqui existe um anuncio novo no ar: qualquer falha vira 'parcial', nao 'falha'.
+    // A partir daqui existe anuncio novo no ar: qualquer falha vira 'parcial', nao 'falha'.
     registro.status = 'parcial';
 
     etapa = 'copiar descricao';
-    if (descricao) await createItemDescription(registro.itemNovo, descricao);
+    if (descricao) for (const id of ids) await createItemDescription(id, descricao);
 
-    etapa = 'liberar o anuncio novo com o estoque real';
-    await updateItem(registro.itemNovo, { available_quantity: Math.max(1, estoqueReal), status: 'active' });
+    etapa = 'liberar os anuncios novos com o estoque real';
+    for (let i = 0; i < ids.length; i++) {
+      const estoque = estoqueDe(sim.payloads[i]);
+      // Variacao sem estoque no original: o anuncio novo fica pausado em vez de abrir vendendo o que nao tem.
+      if (estoque > 0) await updateItem(ids[i], { available_quantity: estoque, status: 'active' });
+    }
 
     etapa = 'fechar o anuncio antigo';
     await updateItem(sim.itemId, { available_quantity: 0, status: 'paused' });
     await updateItem(sim.itemId, { status: 'closed' });
 
     registro.status = 'sucesso';
-    logger.info(`[RECRIAR] ${sim.itemId} -> ${registro.itemNovo} concluido.`);
+    logger.info(`[RECRIAR] ${sim.itemId} -> ${(registro.itensNovos || []).map((i) => i.id).join(', ')} concluido.`);
   } catch (err: any) {
     registro.etapaQueFalhou = etapa;
     registro.erro = String(err?.message || err);
