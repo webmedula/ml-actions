@@ -132,6 +132,19 @@ naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviç
 
 ## Histórico de versões
 
+### actions v18 (2026-11-03)
+
+Motivo: o clone de uma lanterna foi recusado com `item.attribute.invalid: Value name of attribute
+FOG_LIGHT_MATERIAL was not provided and couldn't be resolved from attributes database`. O anúncio
+original guarda um código de valor que a categoria não reconhece mais; o anúncio novo nasce sob as
+regras de hoje e é recusado.
+
+- **Correção automática na simulação.** Quando o ML recusa por esse motivo, o clone passa a enviar o
+  atributo pelo **nome** do original em vez do código antigo. Se o original não tem nome legível, o
+  atributo **sai** do clone. Valida de novo uma vez e avisa no painel o que foi trocado ou retirado.
+- Se o atributo for obrigatório, a nova validação mostra o erro novo em vez de travar no código velho.
+- Testes: 106 → 109.
+
 ### actions v17 (2026-10-30)
 
 Motivo: o `MLB6198163182` (2 variações, 438 em estoque) foi recusado com `family_name` obrigatório e

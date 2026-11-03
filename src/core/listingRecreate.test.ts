@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia } from './listingRecreate';
+import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia, atributosIrresolviveis, corrigirAtributosIrresolviveis } from './listingRecreate';
 import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
@@ -614,5 +614,34 @@ describe('v17: agregarValidacoes e combinarVeredictos', () => {
     expect(combinarVeredictos(['zera', 'nao_zera'])).toBe('nao_zera');
     expect(combinarVeredictos(['zera', 'indeterminado'])).toBe('indeterminado');
     expect(combinarVeredictos([])).toBe('indeterminado');
+  });
+});
+
+describe('v18: atributos com valor que a categoria nao reconhece mais', () => {
+  const recusa = interpretarValidacao(400, {
+    error: 'validation_error',
+    cause: [{ type: 'error', code: 'item.attribute.invalid', message: "Value name of attribute FOG_LIGHT_MATERIAL was not provided and couldn't be resolved from attributes database." }],
+  });
+
+  it('detecta o atributo pelo texto do erro', () => {
+    expect(atributosIrresolviveis(recusa)).toEqual(['FOG_LIGHT_MATERIAL']);
+    expect(atributosIrresolviveis(interpretarValidacao(204, undefined))).toEqual([]);
+  });
+
+  it('troca o value_id velho pelo nome do original', () => {
+    const item = { ...itemBase, attributes: [{ id: 'BRAND', value_name: 'Generica' }, { id: 'FOG_LIGHT_MATERIAL', value_id: '999', value_name: 'Plastico' }] };
+    const { clones } = montarClones(item);
+    const r = corrigirAtributosIrresolviveis(item, clones, ['FOG_LIGHT_MATERIAL']);
+    expect(r.clones[0].payload.attributes).toContainEqual({ id: 'FOG_LIGHT_MATERIAL', value_name: 'Plastico' });
+    expect(r.clones[0].payload.attributes).toContainEqual({ id: 'BRAND', value_name: 'Generica' });
+    expect(r.avisos[0]).toContain('Plastico');
+  });
+
+  it('retira o atributo quando o original nao tem nome legivel', () => {
+    const item = { ...itemBase, attributes: [{ id: 'BRAND', value_name: 'Generica' }, { id: 'FOG_LIGHT_MATERIAL', value_id: '999', value_name: null }] };
+    const { clones } = montarClones(item);
+    const r = corrigirAtributosIrresolviveis(item, clones, ['FOG_LIGHT_MATERIAL']);
+    expect(r.clones[0].payload.attributes.map((a: any) => a.id)).toEqual(['BRAND']);
+    expect(r.avisos[0]).toContain('retirado');
   });
 });
