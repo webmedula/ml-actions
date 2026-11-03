@@ -25,6 +25,7 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
     return {
       versao: config.appVersion,
       escritaHabilitada: config.recreateEnabled,
+      promocoesHabilitadas: config.promocoesEnabled,
       mlAutenticado: getMlAuthStatus().authenticated,
       analyticsConfigurado: !!config.analyticsBaseUrl,
     };

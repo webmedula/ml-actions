@@ -262,7 +262,21 @@ export async function getRating(id: string): Promise<MlRating | null> {
   return null;
 }
 
+/** v21: promocoes ligadas ao anuncio (Central de Promocoes): candidatas, ofertas prontas e ativas. */
+export async function getItemPromotions(itemId: string): Promise<any[]> {
+  const d = await mlRequest<any>(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`);
+  return Array.isArray(d) ? d : Array.isArray(d?.results) ? d.results : [];
+}
+
 // --- ESCRITA (tudo abaixo altera dados reais da conta) ---
+
+/**
+ * v21: adere o anuncio a uma promocao. Sem retry de 429 (POST): repetir poderia aderir duas vezes
+ * ou a uma promocao que ja entrou.
+ */
+export async function joinPromotion(itemId: string, corpo: Record<string, unknown>): Promise<any> {
+  return mlRequest<any>(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`, { method: 'POST', body: corpo });
+}
 
 /** Valida um payload de anuncio SEM criar nada. E a rede de seguranca da simulacao. */
 export async function validateItemPayload(payload: unknown): Promise<ResultadoValidacao> {

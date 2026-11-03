@@ -1,5 +1,17 @@
 # ml-actions
 
+> **v21 (2026-11-03): aderir a promoções do ML.** Painel "Aderir a uma promoção": informe o MLB, veja
+> as promoções que o ML oferece (convites, ofertas prontas com parte bancada pelo ML, relâmpago,
+> campanhas como 11.11) e **simule** a adesão: preço final, desconto, parte do ML e o pedido exato
+> que vai para o ML. Aderir exige o token da simulação (30 min), `confirmacao: "ADERIR"` e a trava
+> **`PROMOCOES_ENABLED=true`**, separada da trava da recriação e desligada por padrão. Tipos
+> suportados: SMART, PRICE_MATCHING, SMART_LIGHTNING, UNHEALTHY_STOCK (aceita a oferta pelo
+> `offer_id`), DEAL e DOD (preço dentro da faixa), LIGHTNING (preço e unidades reservadas) e
+> MARKETPLACE_CAMPAIGN. O ML não tem rota de validação para promoções, então a simulação só confere
+> faixa de preço e estoque, e a resposta do ML (aceite ou recusa) fica em `data/promocoes-adesoes.json`.
+> O app do ml-actions precisa da permissão de **escrita de promoções** no DevCenter. A aba
+> Promoções do ml-analytics abre esta tela já na promoção certa (`?promo=MLB...&promocao=P-MLB...`).
+
 Serviço de **ações de escrita** no Mercado Livre. Hoje faz uma coisa só: **recriar um anúncio**
 para zerar a pontuação de opiniões.
 
