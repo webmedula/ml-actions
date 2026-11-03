@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia, atributosIrresolviveis, corrigirAtributosIrresolviveis } from './listingRecreate';
+import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia, atributosIrresolviveis, corrigirAtributosIrresolviveis, produtosDasVariacoes } from './listingRecreate';
 import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
@@ -643,5 +643,29 @@ describe('v18: atributos com valor que a categoria nao reconhece mais', () => {
     const r = corrigirAtributosIrresolviveis(item, clones, ['FOG_LIGHT_MATERIAL']);
     expect(r.clones[0].payload.attributes.map((a: any) => a.id)).toEqual(['BRAND']);
     expect(r.avisos[0]).toContain('retirado');
+  });
+});
+
+describe('v19: sondagem de anuncio com variacoes', () => {
+  it('le o produto do usuario de cada variacao', () => {
+    expect(produtosDasVariacoes({ variations: [{ user_product_id: 'MLBU1' }, { user_product_id: 'MLBU2' }, {}] })).toEqual(['MLBU1', 'MLBU2']);
+    expect(produtosDasVariacoes({})).toEqual([]);
+  });
+
+  it('original sem produto do usuario e fora de catalogo: teste com produto proprio zera', () => {
+    const r = interpretarSondagem(null, 'MLBU5756631446', { originais: [], originalSemProduto: true });
+    expect(r.veredicto).toBe('zera');
+    expect(r.explicacao).toContain('presas ao proprio anuncio');
+  });
+
+  it('sem a certeza de que o original nao tem produto, continua indeterminado', () => {
+    expect(interpretarSondagem(null, 'MLBU9', { originais: [] }).veredicto).toBe('indeterminado');
+    expect(interpretarSondagem(null, null, { originais: [], originalSemProduto: true }).veredicto).toBe('indeterminado');
+  });
+
+  it('compara com o produto de QUALQUER variacao do original', () => {
+    const ctx = { originais: ['MLBU1', 'MLBU2'] };
+    expect(interpretarSondagem('MLBU1', 'MLBU2', ctx).veredicto).toBe('nao_zera');
+    expect(interpretarSondagem('MLBU1', 'MLBU3', ctx).veredicto).toBe('zera');
   });
 });
