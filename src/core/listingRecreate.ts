@@ -570,6 +570,13 @@ export interface Simulacao {
   exigeSondagem: boolean;
   /** Produto do usuario do anuncio ORIGINAL — a sondagem compara o do clone com este. */
   userProductIdOriginal: string | null;
+  /** v19: TODOS os produtos do usuario do original — o do item e os de cada variacao. */
+  userProductIdsOriginais: string[];
+  /**
+   * v19: o original nao esta em produto do usuario nenhum (nem nas variacoes, nem pelas opinioes) e
+   * nao e de catalogo. A opiniao mora no proprio anuncio, entao qualquer produto novo zera.
+   */
+  originalSemProduto: boolean;
   /** v16: o MLBU do original lido ANTES de sondar — atributos, anuncios nele e a previsao. */
   produtoDoUsuario: ResumoProdutoDoUsuario | null;
   simuladoEm: string;
@@ -593,6 +600,8 @@ export interface Sondagem {
   itemNovo: string;
   userProductIdOriginal: string | null;
   userProductIdNovo: string | null;
+  /** v19: ver Simulacao.originalSemProduto. */
+  originalSemProduto?: boolean;
   fonte: string;
   veredicto: VeredictoSondagem;
   explicacao: string;
@@ -600,7 +609,45 @@ export interface Sondagem {
 }
 
 /** Compara os dois produtos do usuario e diz o que isso significa. Funcao PURA. */
-export function interpretarSondagem(original: string | null, novo: string | null): { veredicto: VeredictoSondagem; explicacao: string } {
+export interface ContextoSondagem {
+  /** Todos os produtos do usuario do original (item + variacoes). Ausente = so `original`. */
+  originais?: string[];
+  /** O original nao esta em produto do usuario nenhum e nao e de catalogo. */
+  originalSemProduto?: boolean;
+}
+
+/** Produtos do usuario das variacoes do original. Funcao PURA. */
+export function produtosDasVariacoes(item: any): string[] {
+  const out = new Set<string>();
+  for (const v of Array.isArray(item?.variations) ? item.variations : []) {
+    if (v?.user_product_id) out.add(String(v.user_product_id));
+  }
+  return [...out];
+}
+
+export function interpretarSondagem(
+  original: string | null,
+  novo: string | null,
+  ctx: ContextoSondagem = {},
+): { veredicto: VeredictoSondagem; explicacao: string } {
+  const originais = ctx.originais ?? (original ? [original] : []);
+  // v19: anuncio antigo com variacoes, sem produto do usuario em lugar nenhum. A opiniao esta presa
+  // ao proprio MLB; o anuncio novo nasce num produto do usuario novo, entao a nota nao vem junto.
+  // Visto em 2026-11-03 na Lanterna Traseira Guerra Diamond (2 variacoes).
+  if (novo && originais.length === 0 && ctx.originalSemProduto) {
+    return {
+      veredicto: 'zera',
+      explicacao:
+        `O anuncio original nao pertence a nenhum produto do usuario (nem as variacoes) e nao e de catalogo: as ` +
+        `opinioes estao presas ao proprio anuncio. O anuncio novo recebeu um produto do usuario proprio (${novo}), ` +
+        'entao as opinioes antigas nao acompanham. Recriar zera a nota.',
+    };
+  }
+  if (novo && originais.length > 1) {
+    return originais.includes(novo)
+      ? interpretarSondagem(novo, novo)
+      : interpretarSondagem(originais[0], novo);
+  }
   if (!novo || !original) {
     return {
       veredicto: 'indeterminado',
@@ -847,7 +894,13 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
   const payload = clones[0].payload;
   avisos.push(...avisosDaValidacao(item, validacao));
   const rating = await getRating(id).catch(() => null);
-  const { userProductId: userProductIdOriginal } = await getUserProductId(id, item);
+  const lido = await getUserProductId(id, item);
+  // v19: num anuncio com variacoes o produto do usuario pode estar em cada variacao, nao no item.
+  const doItem = lido.userProductId;
+  const userProductIdsOriginais = [...new Set([doItem, ...produtosDasVariacoes(item)].filter(Boolean) as string[])];
+  const userProductIdOriginal = doItem ?? userProductIdsOriginais[0] ?? null;
+  const originalSemProduto =
+    userProductIdsOriginais.length === 0 && item?.catalog_listing !== true && !item?.catalog_product_id;
   const produtoDoUsuario = await lerProdutoDoUsuario(userProductIdOriginal, item?.seller_id, payload);
 
   const sim: Simulacao = {
@@ -874,6 +927,8 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
     validacao,
     exigeSondagem: validacao.soAvisos,
     userProductIdOriginal,
+    userProductIdsOriginais,
+    originalSemProduto,
     produtoDoUsuario,
     simuladoEm: new Date().toISOString(),
   };
@@ -981,23 +1036,27 @@ export async function sondarRecriacao(token: string): Promise<Sondagem> {
     throw err;
   }
 
+  const ctx: ContextoSondagem = {
+    originais: sim.userProductIdsOriginais ?? (sim.userProductIdOriginal ? [sim.userProductIdOriginal] : []),
+    originalSemProduto: sim.originalSemProduto === true,
+  };
   const itens: ItemDeSondagem[] = [];
   let fonte = '';
   for (const c of criados) {
     const { userProductId, fonte: f } = await getUserProductId(c.id, c.novo);
     fonte = fonte || f;
-    const { veredicto: v } = interpretarSondagem(sim.userProductIdOriginal, userProductId);
+    const { veredicto: v } = interpretarSondagem(sim.userProductIdOriginal, userProductId, ctx);
     itens.push({ itemNovo: c.id, rotulo: c.clone.rotulo, userProductIdNovo: userProductId, veredicto: v });
   }
 
   const veredicto = combinarVeredictos(itens.map((i) => i.veredicto));
   const primeiro = itens[0];
-  let { explicacao } = interpretarSondagem(sim.userProductIdOriginal, primeiro.userProductIdNovo);
+  let { explicacao } = interpretarSondagem(sim.userProductIdOriginal, primeiro.userProductIdNovo, ctx);
   if (itens.length > 1) {
     explicacao =
       `${itens.length} anuncios de teste criados. ` +
       itens.map((i) => `${i.rotulo || i.itemNovo}: ${i.userProductIdNovo || '?'}`).join(' · ') +
-      `. Resultado geral: ${veredicto === 'zera' ? 'todos receberam produto do usuario diferente do original — recriar zera a nota.' : veredicto === 'nao_zera' ? 'pelo menos um caiu no MESMO produto do usuario do original — a nota dele viria junto.' : 'o ML nao informou o produto de algum deles — nao da pra concluir.'}`;
+      `. Resultado geral: ${veredicto === 'zera' ? (ctx.originalSemProduto ? 'o original nao pertence a nenhum produto do usuario (a opiniao esta presa ao anuncio) e todos os testes nasceram num produto proprio — recriar zera a nota.' : 'todos receberam produto do usuario diferente do original — recriar zera a nota.') : veredicto === 'nao_zera' ? 'pelo menos um caiu no MESMO produto do usuario do original — a nota dele viria junto.' : 'o ML nao informou o produto de algum deles — nao da pra concluir.'}`;
   }
 
   const sondagem: Sondagem = {
@@ -1005,6 +1064,7 @@ export async function sondarRecriacao(token: string): Promise<Sondagem> {
     itemNovo: primeiro.itemNovo,
     userProductIdOriginal: sim.userProductIdOriginal,
     userProductIdNovo: primeiro.userProductIdNovo,
+    originalSemProduto: ctx.originalSemProduto,
     fonte,
     veredicto,
     explicacao,

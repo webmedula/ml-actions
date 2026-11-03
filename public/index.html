@@ -428,7 +428,7 @@ async function sondar() {
     const icone = r.veredicto === 'zera' ? '✅' : (r.veredicto === 'nao_zera' ? '🛑' : '❓');
 
     box.innerHTML = '<div class="' + classe + '" style="margin-bottom:12px">' + icone + ' ' + esc(r.explicacao) +
-      '<div class="muted" style="margin-top:8px">Original: <b>' + esc(r.userProductIdOriginal || '—') + '</b> · ' +
+      '<div class="muted" style="margin-top:8px">Original: <b>' + (r.userProductIdOriginal ? esc(r.userProductIdOriginal) : (r.originalSemProduto ? 'nenhum (opinião presa ao anúncio)' : '—')) + '</b> · ' +
       (r.itens && r.itens.length > 1
         ? 'Testes: ' + r.itens.map(i => esc(i.itemNovo) + (i.rotulo ? ' (' + esc(i.rotulo) + ')' : '') + ': <b>' + esc(i.userProductIdNovo || '—') + '</b>').join(' · ')
         : 'Teste (' + esc(r.itemNovo) + '): <b>' + esc(r.userProductIdNovo || '—') + '</b>') +

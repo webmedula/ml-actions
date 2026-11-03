@@ -132,6 +132,20 @@ naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviç
 
 ## Histórico de versões
 
+### actions v19 (2026-11-03)
+
+Motivo: na Lanterna Traseira Guerra Diamond (2 variações, sem família) a sondagem criou os 2 testes,
+cada um num produto do usuário novo, mas concluiu "não dá pra concluir" porque o original não tem
+produto do usuário no item.
+
+- **Produto do usuário das variações.** O original passa a ser lido também em
+  `variations[].user_product_id`. Um teste que cair no produto de **qualquer** variação dá "não zera".
+- **Original sem produto do usuário.** Se nem o item, nem as variações, nem as opiniões apontam um
+  produto do usuário, e o anúncio não é de catálogo, a opinião está presa ao próprio MLB. Testes que
+  nascem num produto próprio dão "zera". Sem essa certeza, continua "indeterminado".
+- Painel mostra "nenhum (opinião presa ao anúncio)" no lugar de "—".
+- Testes: 109 → 113.
+
 ### actions v18 (2026-11-03)
 
 Motivo: o clone de uma lanterna foi recusado com `item.attribute.invalid: Value name of attribute
