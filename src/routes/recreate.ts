@@ -3,6 +3,7 @@ import { config } from '../config';
 import { buscarCandidatos } from '../core/candidates';
 import {
   descartarSondagem,
+  DestinoAntigo,
   diagnosticarFormas,
   executarRecriacao,
   lerHistorico,
@@ -92,7 +93,7 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
   /** Passo 3: EXECUTA. Escrita real e irreversivel. Exige simulacao valida + confirmacao + flag. */
   app.post('/api/listings/recreate/execute', async (req, reply) => {
     if (!exigeAuth(reply)) return;
-    const { token, confirmacao } = (req.body as { token?: string; confirmacao?: string }) || {};
+    const { token, confirmacao, antigo } = (req.body as { token?: string; confirmacao?: string; antigo?: string }) || {};
     if (!token) {
       reply.code(400);
       return { mensagem: 'Informe o token da simulacao.' };
@@ -103,7 +104,8 @@ export async function recreateRoutes(app: FastifyInstance): Promise<void> {
       return { mensagem: 'Confirmacao ausente. Envie confirmacao: "RECRIAR" para executar.' };
     }
     try {
-      const registro = await executarRecriacao(token);
+      // v20: padrao e MANTER o antigo como esta. Pausar/fechar so quando pedido.
+      const registro = await executarRecriacao(token, (antigo || 'manter') as DestinoAntigo);
       reply.code(registro.status === 'sucesso' ? 200 : 207);
       return registro;
     } catch (err: any) {

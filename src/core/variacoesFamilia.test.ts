@@ -74,7 +74,7 @@ describe('v17: recriacao com variacoes em categoria de familia', () => {
 
   it('executa criando N anuncios, cada um com o estoque da sua variacao, e fecha o antigo', async () => {
     const sim = await simularRecriacao(item.id);
-    const reg = await executarRecriacao(sim.token);
+    const reg = await executarRecriacao(sim.token, 'fechar');
     expect(reg.status).toBe('sucesso');
     expect(reg.itensNovos?.map((i) => [i.id, i.estoque])).toEqual([['MLBNEW1', 300], ['MLBNEW2', 138]]);
     expect(reg.estoqueTransferido).toBe(438);
@@ -82,6 +82,21 @@ describe('v17: recriacao com variacoes em categoria de familia', () => {
     expect(ml.updateItem).toHaveBeenCalledWith('MLBNEW2', { available_quantity: 138, status: 'active' });
     expect(ml.updateItem).toHaveBeenCalledWith(item.id, { status: 'closed' });
     expect(ml.createItemDescription).toHaveBeenCalledTimes(2);
+  });
+
+  it('v20: por padrao mantem o antigo como esta', async () => {
+    const sim = await simularRecriacao(item.id);
+    const reg = await executarRecriacao(sim.token);
+    expect(reg.status).toBe('sucesso');
+    expect(reg.antigo).toBe('manter');
+    expect(ml.updateItem).not.toHaveBeenCalledWith(item.id, expect.anything());
+  });
+
+  it('v20: pausar zera o estoque do antigo e nao fecha', async () => {
+    const sim = await simularRecriacao(item.id);
+    await executarRecriacao(sim.token, 'pausar');
+    expect(ml.updateItem).toHaveBeenCalledWith(item.id, { available_quantity: 0, status: 'paused' });
+    expect(ml.updateItem).not.toHaveBeenCalledWith(item.id, { status: 'closed' });
   });
 
   it('variacao sem estoque no original nao e ativada', async () => {

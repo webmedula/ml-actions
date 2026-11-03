@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia, atributosIrresolviveis, corrigirAtributosIrresolviveis, produtosDasVariacoes } from './listingRecreate';
+import { agregarValidacoes, avaliacoesParaRecuperar, avisosDaValidacao, combinarVeredictos, resumirProdutoDoUsuario, errosIguaisNoGrupo, interpretarSondagem, montarClone, montarClones, precisaDeFamilia, atributosIrresolviveis, corrigirAtributosIrresolviveis, produtosDasVariacoes, DESTINOS_ANTIGO, executarRecriacao } from './listingRecreate';
 import { interpretarValidacao } from '../ml/mlClient';
 
 const itemBase = {
@@ -667,5 +667,12 @@ describe('v19: sondagem de anuncio com variacoes', () => {
     const ctx = { originais: ['MLBU1', 'MLBU2'] };
     expect(interpretarSondagem('MLBU1', 'MLBU2', ctx).veredicto).toBe('nao_zera');
     expect(interpretarSondagem('MLBU1', 'MLBU3', ctx).veredicto).toBe('zera');
+  });
+});
+
+describe('v20: destino do anuncio antigo', () => {
+  it('aceita so manter, pausar ou fechar', async () => {
+    expect(DESTINOS_ANTIGO).toEqual(['manter', 'pausar', 'fechar']);
+    await expect(executarRecriacao('qualquer', 'apagar' as any)).rejects.toThrow(/invalido/);
   });
 });
