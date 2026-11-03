@@ -963,7 +963,18 @@ export interface RegistroRecriacao {
   snapshot: Record<string, any>;
   /** A sondagem que autorizou esta execucao, quando houve uma. */
   sondagem?: Sondagem;
+  /** v20: o que foi feito com o anuncio antigo. Ausente nos registros anteriores (= fechado). */
+  antigo?: DestinoAntigo;
 }
+
+/**
+ * v20: o que fazer com o anuncio antigo na virada.
+ * - manter: fica como esta (padrao). Os dois anuncios vendem o mesmo estoque fisico.
+ * - pausar: zera o estoque e pausa — da pra reativar depois.
+ * - fechar: pausa e fecha (comportamento ate a v19). Fechado nao volta.
+ */
+export type DestinoAntigo = 'manter' | 'pausar' | 'fechar';
+export const DESTINOS_ANTIGO: DestinoAntigo[] = ['manter', 'pausar', 'fechar'];
 
 function historicoPath(): string {
   return config.recreationsPath;
@@ -1115,7 +1126,10 @@ export async function descartarSondagem(token: string): Promise<{ descartado: st
  * agir a mao — o codigo NAO tenta desfazer sozinho, porque um rollback automatico errado no meio
  * da virada e pior que um estado conhecido e registrado.
  */
-export async function executarRecriacao(token: string): Promise<RegistroRecriacao> {
+export async function executarRecriacao(token: string, destinoAntigo: DestinoAntigo = 'manter'): Promise<RegistroRecriacao> {
+  if (!DESTINOS_ANTIGO.includes(destinoAntigo)) {
+    throw new RecriacaoBloqueada(`Destino do anuncio antigo invalido: "${destinoAntigo}". Use manter, pausar ou fechar.`);
+  }
   if (!config.recreateEnabled) {
     throw new RecriacaoBloqueada(
       'Escrita desligada neste servico. Defina RECREATE_ENABLED=true para habilitar as acoes no Mercado Livre.',
@@ -1160,6 +1174,7 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
     executadoEm: new Date().toISOString(),
     status: 'falha',
     snapshot,
+    antigo: destinoAntigo,
   };
 
   // Estoque de cada anuncio novo: relido do snapshot (por id de variacao) — o simulado pode estar velho.
@@ -1207,12 +1222,14 @@ export async function executarRecriacao(token: string): Promise<RegistroRecriaca
       if (estoque > 0) await updateItem(ids[i], { available_quantity: estoque, status: 'active' });
     }
 
-    etapa = 'fechar o anuncio antigo';
-    await updateItem(sim.itemId, { available_quantity: 0, status: 'paused' });
-    await updateItem(sim.itemId, { status: 'closed' });
+    if (destinoAntigo !== 'manter') {
+      etapa = destinoAntigo === 'fechar' ? 'fechar o anuncio antigo' : 'pausar o anuncio antigo';
+      await updateItem(sim.itemId, { available_quantity: 0, status: 'paused' });
+      if (destinoAntigo === 'fechar') await updateItem(sim.itemId, { status: 'closed' });
+    }
 
     registro.status = 'sucesso';
-    logger.info(`[RECRIAR] ${sim.itemId} -> ${(registro.itensNovos || []).map((i) => i.id).join(', ')} concluido.`);
+    logger.info(`[RECRIAR] ${sim.itemId} -> ${(registro.itensNovos || []).map((i) => i.id).join(', ')} concluido (antigo: ${destinoAntigo}).`);
   } catch (err: any) {
     registro.etapaQueFalhou = etapa;
     registro.erro = String(err?.message || err);

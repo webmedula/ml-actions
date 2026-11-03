@@ -402,6 +402,16 @@ function render(s) {
   h += '<div id="sondagemBox"></div>';
   const naoZera = !!(up && up.previsao === 'provavel_nao_zera');
 
+  // v20: o anuncio antigo fica no ar por padrao. Pausar/fechar e escolha explicita.
+  if (s.escritaHabilitada && s.validacao.ok) {
+    h += '<div style="margin:12px 0"><label class="muted" for="destinoAntigo">Anúncio antigo depois da virada</label>' +
+      '<select id="destinoAntigo" style="display:block;margin-top:4px">' +
+      '<option value="manter" selected>Manter como está (padrão)</option>' +
+      '<option value="pausar">Pausar (zera o estoque, dá pra reativar)</option>' +
+      '<option value="fechar">Fechar (não volta)</option>' +
+      '</select>' +
+      '<div class="muted" style="margin-top:4px">Mantido, os dois anúncios vendem o mesmo estoque físico. O Tiny só sincroniza o MLB vinculado ao SKU — o outro pode vender o que não tem.</div></div>';
+  }
   h += '<div class="row" id="acoesSondagem" style="justify-content:flex-end"><button class="secondary" onclick="fecharModal()">Cancelar</button>';
   if (!s.escritaHabilitada) {
     h += '<span class="muted">Escrita desligada neste serviço (<code>RECREATE_ENABLED</code>).</span>';
@@ -461,15 +471,17 @@ async function descartar() {
 
 async function executar() {
   if (!sim) return;
+  const sel = document.getElementById('destinoAntigo');
+  const antigo = sel ? sel.value : 'manter';
   const b = document.getElementById('modalBody');
-  b.innerHTML = '<div class="muted">Criando o anúncio novo, transferindo o estoque e fechando o antigo…</div>';
+  b.innerHTML = '<div class="muted">Criando o anúncio novo e liberando o estoque' + (antigo === 'manter' ? '' : (antigo === 'pausar' ? ', depois pausando o antigo' : ', depois fechando o antigo')) + '…</div>';
   try {
-    const r = await api('/api/listings/recreate/execute', { token: sim.token, confirmacao: 'RECRIAR' });
+    const r = await api('/api/listings/recreate/execute', { token: sim.token, confirmacao: 'RECRIAR', antigo });
     b.innerHTML = (r.status === 'sucesso'
       ? '<div class="insight">✅ Pronto. ' + ((r.itensNovos && r.itensNovos.length > 1)
           ? 'Anúncios novos: ' + r.itensNovos.map(i => '<b>' + esc(i.id) + '</b>' + (i.rotulo ? ' (' + esc(i.rotulo) + ', estoque ' + i.estoque + ')' : '')).join(' · ')
           : 'Anúncio novo: <b>' + esc(r.itemNovo) + '</b>') +
-        '. O antigo (' + esc(r.itemAntigo) + ') foi fechado.<br><br>' +
+        '. O antigo (' + esc(r.itemAntigo) + ') ' + (r.antigo === 'manter' ? 'continua no ar, como estava.' : (r.antigo === 'pausar' ? 'foi pausado.' : 'foi fechado.')) + '<br><br>' +
         '<b>Falta um passo fora daqui:</b> atualizar o vínculo do(s) SKU(s) no Tiny para o(s) MLB(s) novo(s), senão estoque, preço e nota fiscal param de sincronizar.</div>'
       : '<div class="insight bad">⚠️ Parou em "<b>' + esc(r.etapaQueFalhou || '—') + '</b>": ' + esc(r.erro || '') + '<br><br>Anúncio(s) novo(s): <b>' + esc(((r.itensNovos || []).map(i => i.id).join(', ')) || r.itemNovo || 'não criado') + '</b> · antigo: <b>' + esc(r.itemAntigo) + '</b>. Confira os dois no Mercado Livre — o serviço não desfaz nada sozinho.</div>')
       + '<div class="row" style="justify-content:flex-end;margin-top:12px"><button onclick="fecharModal();carregar()">Fechar</button></div>';

@@ -26,7 +26,8 @@ São três passos separados, sempre:
 2. **Sondar** — cria o clone **pausado, com estoque 1**, e lê o produto do usuário (`MLBU...`) que
    o ML atribuiu a ele. Se for diferente do original, recriar zera a nota. Se for o mesmo, a nota
    viria junto e não adianta — descarte o teste. O anúncio original não é tocado em nenhum caso.
-3. **Executar** — libera o anúncio novo com o estoque real e fecha o antigo. Escrita real.
+3. **Executar** — libera o anúncio novo com o estoque real. O antigo, por padrão, **fica como está**
+   (v20); dá para escolher pausar ou fechar. Escrita real.
    Quando houve sondagem, reaproveita o anúncio dela: sondar e depois executar **não** cria dois.
 
 A tela de simulação mostra o contraponto antes do botão: quantas avaliações 5 estrelas
@@ -131,6 +132,18 @@ atualiza é você. Enquanto não atualizar, estoque, preço e emissão de NF par
 naquele SKU. Automatizar isso exige mexer no `tiny-pedidos-nf`, que é o serviço que emite nota.
 
 ## Histórico de versões
+
+### actions v20 (2026-11-03)
+
+Motivo: depois da primeira recriação real, o operador pediu para não fechar o anúncio antigo.
+
+- **Antigo mantido por padrão.** Executar não mexe mais no anúncio antigo. No painel há um seletor:
+  manter (padrão), pausar (zera o estoque, dá para reativar) ou fechar (comportamento até a v19).
+  A API aceita `antigo: "manter" | "pausar" | "fechar"` no corpo do execute.
+- O histórico grava a escolha (`antigo`). Registros anteriores não têm o campo e foram fechados.
+- Atenção: mantido, os dois anúncios vendem o mesmo estoque físico, e o Tiny só sincroniza o MLB
+  vinculado ao SKU. O outro pode vender o que não tem.
+- Testes: 113 → 116.
 
 ### actions v19 (2026-11-03)
 
