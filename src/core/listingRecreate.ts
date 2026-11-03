@@ -414,6 +414,92 @@ export function montarClones(item: any, opts: OpcoesClone = {}): ResultadoClones
   return { clones, avisos: avisosFinais };
 }
 
+/**
+ * Atributos que o ML recusou com "Value name of attribute X was not provided and couldn't be
+ * resolved from attributes database". Funcao PURA.
+ *
+ * Acontece quando o anuncio original guarda um `value_id` que a categoria nao reconhece mais: o
+ * anuncio antigo continua no ar com ele, mas um anuncio NOVO nasce sob as regras de hoje.
+ * Visto em 2026-11-03 com FOG_LIGHT_MATERIAL (lanternas/farois).
+ */
+export function atributosIrresolviveis(validacao: ResultadoValidacao): string[] {
+  if (validacao.ok) return [];
+  const ids = new Set<string>();
+  for (const e of validacao.erros) {
+    const m = /value name of attribute\s+([A-Z0-9_]+)\s+was not provided/i.exec(e);
+    if (m) ids.add(m[1].toUpperCase());
+  }
+  return [...ids];
+}
+
+/** Primeiro `value_name` conhecido de um atributo no original (item ou variacoes). */
+function nomeOriginalDoAtributo(item: any, id: string): string | null {
+  const listas: any[][] = [Array.isArray(item?.attributes) ? item.attributes : []];
+  for (const v of Array.isArray(item?.variations) ? item.variations : []) {
+    if (Array.isArray(v?.attributes)) listas.push(v.attributes);
+    if (Array.isArray(v?.attribute_combinations)) listas.push(v.attribute_combinations);
+  }
+  for (const lista of listas) {
+    for (const a of lista) {
+      if (a?.id === id && typeof a.value_name === 'string' && a.value_name.trim()) return a.value_name.trim();
+    }
+  }
+  return null;
+}
+
+function trocarAtributos(lista: any, ids: Set<string>, nomes: Map<string, string | null>): any[] | undefined {
+  if (!Array.isArray(lista)) return lista;
+  const out: any[] = [];
+  for (const a of lista) {
+    if (!ids.has(a?.id)) { out.push(a); continue; }
+    const nome = nomes.get(a.id);
+    if (nome) out.push({ id: a.id, value_name: nome });
+    // sem nome legivel: o atributo sai do clone
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Corrige os atributos irresolviveis nos clones: manda o `value_name` do original no lugar do
+ * `value_id` velho; se o original nao tem nome legivel, o atributo sai do clone. Funcao PURA.
+ *
+ * Se o atributo for obrigatorio, a nova validacao vai dizer — e o operador ve o erro novo em vez
+ * de ficar preso num id que nem ele nem a API conseguem enxergar.
+ */
+export function corrigirAtributosIrresolviveis(
+  item: any,
+  clones: ClonePayload[],
+  ids: string[],
+): { clones: ClonePayload[]; avisos: string[] } {
+  const alvo = new Set(ids);
+  const nomes = new Map(ids.map((id) => [id, nomeOriginalDoAtributo(item, id)] as const));
+  const corrigidos = clones.map((c) => {
+    const payload: Record<string, any> = { ...c.payload };
+    const attrs = trocarAtributos(payload.attributes, alvo, nomes);
+    if (attrs) payload.attributes = attrs; else delete payload.attributes;
+    if (Array.isArray(payload.variations)) {
+      payload.variations = payload.variations.map((v: any) => {
+        const nv: Record<string, any> = { ...v };
+        for (const campo of ['attributes', 'attribute_combinations']) {
+          if (!(campo in nv)) continue;
+          const l = trocarAtributos(nv[campo], alvo, nomes);
+          if (l) nv[campo] = l; else delete nv[campo];
+        }
+        return nv;
+      });
+    }
+    return { ...c, payload };
+  });
+  const avisos = ids.map((id) => {
+    const nome = nomes.get(id);
+    return nome
+      ? `O valor do atributo ${id} no original nao existe mais na categoria. Enviei pelo nome ("${nome}") em vez do codigo antigo.`
+      : `O valor do atributo ${id} no original nao existe mais na categoria e nao tem nome legivel. O atributo foi retirado ` +
+        'do anuncio novo — preencha depois no Mercado Livre se quiser.';
+  });
+  return { clones: corrigidos, avisos };
+}
+
 /** O ML recusou por falta de familia? Funcao PURA. */
 export function precisaDeFamilia(validacao: ResultadoValidacao): boolean {
   return !validacao.ok && validacao.erros.some((e) => /family_name/i.test(e));
@@ -747,6 +833,16 @@ export async function simularRecriacao(itemId: string, opts: OpcoesClone = {}): 
       ...refeito.avisos,
     ];
     validacao = validacao2;
+  }
+
+  // O original guarda um valor de atributo que a categoria nao reconhece mais. Troca pelo nome (ou
+  // retira) e valida de novo. Uma rodada so: se o ML ainda recusar, o operador ve o erro novo.
+  const irresolviveis = atributosIrresolviveis(validacao);
+  if (irresolviveis.length) {
+    const corrigido = corrigirAtributosIrresolviveis(item, clones, irresolviveis);
+    clones = corrigido.clones;
+    avisos = [...corrigido.avisos, ...avisos];
+    validacao = agregarValidacoes(await Promise.all(clones.map((c) => validateItemPayload(c.payload))));
   }
   const payload = clones[0].payload;
   avisos.push(...avisosDaValidacao(item, validacao));
