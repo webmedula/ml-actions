@@ -6,6 +6,7 @@ import { logger } from './logger';
 import { healthRoutes } from './routes/health';
 import { mlOauthRoutes } from './routes/mlOauth';
 import { recreateRoutes } from './routes/recreate';
+import { promocoesRoutes } from './routes/promocoes';
 
 export function buildServer() {
   const app = Fastify({ logger: false });
@@ -42,6 +43,7 @@ export function buildServer() {
   app.register(healthRoutes);
   app.register(mlOauthRoutes);
   app.register(recreateRoutes);
+  app.register(promocoesRoutes);
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error('Erro nao tratado:', err.message, err.stack);

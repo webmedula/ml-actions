@@ -77,6 +77,16 @@
     </div>
   </section>
 
+  <section class="panel" id="promoPanel">
+    <h2>Aderir a uma promoção</h2>
+    <p class="muted" style="margin-top:0">Informe o MLB para ver as promoções que o ML oferece a ele. O botão só <b>simula</b>: a adesão só acontece depois de você confirmar.</p>
+    <div class="row">
+      <input id="promoMlb" class="txt" placeholder="MLB4109133481" style="min-width:220px" />
+      <button onclick="verPromocoes()">Ver promoções</button>
+    </div>
+    <div id="promoLista"></div>
+  </section>
+
   <section class="panel">
     <h2>Candidatos (via ml-analytics)</h2>
     <div id="candidatos"><div class="muted">Carregando…</div></div>
@@ -91,7 +101,7 @@
 <div id="modal">
   <div class="panel" style="max-width:700px;width:100%;max-height:88vh;overflow:auto">
     <div class="row" style="justify-content:space-between;margin-bottom:12px">
-      <h2 style="margin:0">Recriar anúncio</h2>
+      <h2 style="margin:0" id="modalTitulo">Recriar anúncio</h2>
       <button class="secondary" onclick="fecharModal()">✕</button>
     </div>
     <div id="modalBody"></div>
@@ -134,6 +144,7 @@ async function carregar() {
   }
   carregarCandidatos();
   carregarHistorico();
+  abrirPromoDoLink();
 }
 
 const ROTULO_ACAO = {
@@ -271,10 +282,123 @@ function simularManual() {
   simular(v);
 }
 
+
+// --- PROMOÇÕES (v21) ---
+let promoSim = null;
+let promoItens = [];
+const pct = v => v == null ? '' : String(v).replace('.', ',') + '%';
+function dataCurta(iso) { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }); }
+
+async function verPromocoes(itemId) {
+  const id = (itemId || document.getElementById('promoMlb').value).trim().toUpperCase();
+  if (!id) return;
+  document.getElementById('promoMlb').value = id;
+  const el = document.getElementById('promoLista');
+  el.innerHTML = '<div class="muted" style="margin-top:10px">Lendo as promoções no ML…</div>';
+  try {
+    const d = await api('/api/promocoes/' + encodeURIComponent(id));
+    promoItens = d.promocoes || [];
+    if (!promoItens.length) { el.innerHTML = '<div class="muted" style="margin-top:10px">O ML não oferece nenhuma promoção para este anúncio agora.</div>'; return; }
+    el.innerHTML = '<table><thead><tr><th>Promoção</th><th>Situação</th><th class="num">Preço</th><th class="num">ML banca</th><th></th></tr></thead><tbody>' +
+      promoItens.map((p, i) => {
+        const preco = p.status === 'candidate' ? (p.precoSugerido || p.precoOferta) : (p.precoOferta || p.precoSugerido);
+        const faixa = p.precoMinimo || p.precoMaximo ? '<div class="muted">aceita ' + dinheiro(p.precoMinimo) + ' a ' + dinheiro(p.precoMaximo) + '</div>' : '';
+        const sit = p.aberta ? (p.status === 'candidate' ? 'convite' : 'oferta pronta do ML') : (p.status === 'started' ? 'ativa / participando' : p.status === 'pending' ? 'programada' : p.status);
+        const botao = p.aberta && p.suportada
+          ? '<button onclick="simularPromo(\'' + id + '\',' + i + ')">Simular adesão</button>'
+          : (!p.suportada && p.aberta ? '<span class="muted">pela tela do ML</span>' : '');
+        return '<tr><td>' + esc(p.rotulo) + (p.nome ? '<div class="muted">' + esc(p.nome) + '</div>' : '') +
+          ([dataCurta(p.inicio), dataCurta(p.fim)].filter(Boolean).length ? '<div class="muted">' + [dataCurta(p.inicio), dataCurta(p.fim)].filter(Boolean).join(' a ') + '</div>' : '') + '</td>' +
+          '<td>' + esc(sit) + '</td><td class="num">' + dinheiro(preco) + faixa + '</td>' +
+          '<td class="num">' + (p.mlPercentual ? pct(p.mlPercentual) : '—') + '</td><td>' + botao + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  } catch (e) {
+    el.innerHTML = '<div class="insight bad" style="margin-top:10px">' + esc(e.message) + '</div>';
+  }
+}
+
+async function simularPromo(itemId, idx, preco, estoque) {
+  const p = promoItens[idx];
+  document.getElementById('modalTitulo').textContent = 'Aderir a promoção';
+  document.getElementById('modal').style.display = 'flex';
+  const b = document.getElementById('modalBody');
+  b.innerHTML = '<div class="muted">Relendo a promoção no ML e montando o pedido…</div>';
+  try {
+    const corpo = { itemId, promocaoId: p.promocaoId, tipo: p.tipo };
+    if (preco != null) corpo.preco = preco;
+    if (estoque != null) corpo.estoque = estoque;
+    promoSim = await api('/api/promocoes/simular', corpo);
+    b.innerHTML = renderPromoSim(promoSim, idx);
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">Não dá para aderir: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderPromoSim(s, idx) {
+  const p = s.promocao;
+  const precisaPreco = 'deal_price' in s.corpo;
+  const precisaEstoque = 'stock' in s.corpo;
+  let h = '<h3 style="margin:0 0 2px">' + esc(s.titulo || s.itemId) + '</h3><div class="muted" style="margin-bottom:14px">' + esc(s.itemId) + '</div>';
+  h += '<table style="margin-bottom:14px"><tbody>' +
+    '<tr><td>Promoção</td><td class="num"><b>' + esc(p.rotulo) + '</b>' + (p.nome ? '<div class="muted">' + esc(p.nome) + '</div>' : '') + '</td></tr>' +
+    '<tr><td>Preço cheio do anúncio</td><td class="num">' + dinheiro(s.precoCheio) + '</td></tr>' +
+    '<tr><td>Preço na promoção</td><td class="num"><b>' + dinheiro(s.precoFinal) + '</b>' + (s.descontoPercentual != null ? ' <span class="muted">(−' + pct(s.descontoPercentual) + ')</span>' : '') + '</td></tr>' +
+    (s.mlBanca ? '<tr><td>Parte que o ML banca por venda</td><td class="num">' + dinheiro(s.mlBanca) + '</td></tr>' : '') +
+    (precisaEstoque ? '<tr><td>Unidades reservadas</td><td class="num">' + s.corpo.stock + '</td></tr>' : '') +
+    '</tbody></table>';
+  if (precisaPreco || precisaEstoque) {
+    h += '<div class="row" style="margin-bottom:12px">' +
+      (precisaPreco ? '<label class="muted">Preço R$ <input id="promoPreco" class="txt" style="width:100px" value="' + s.corpo.deal_price + '"></label>' : '') +
+      (precisaEstoque ? '<label class="muted">Unidades <input id="promoEstoque" class="txt" style="width:90px" value="' + s.corpo.stock + '"></label>' : '') +
+      '<button class="secondary" onclick="resimularPromo(' + idx + ')">Recalcular</button>' +
+      (p.precoMinimo || p.precoMaximo ? '<span class="muted">o ML aceita ' + dinheiro(p.precoMinimo) + ' a ' + dinheiro(p.precoMaximo) + '</span>' : '') +
+      '</div>';
+  }
+  if (s.avisos.length) h += '<div class="insight warn" style="margin-bottom:12px">' + s.avisos.map(esc).join('<br>') + '</div>';
+  h += '<details style="margin-bottom:12px"><summary class="muted">Pedido que será enviado ao ML</summary><pre>' + esc(JSON.stringify(s.corpo, null, 2)) + '</pre></details>';
+  h += s.escritaHabilitada
+    ? '<div class="row"><button class="danger" onclick="aderirPromo()">Aderir agora</button><span class="muted">Muda o preço que o comprador vê. Dá para sair depois na tela de promoções do ML.</span></div>'
+    : '<div class="insight warn">Adesão desligada neste serviço (somente simulação). Para aderir, ligue <code>PROMOCOES_ENABLED=true</code> no EasyPanel.</div>';
+  return h;
+}
+
+function resimularPromo(idx) {
+  const pr = document.getElementById('promoPreco');
+  const es = document.getElementById('promoEstoque');
+  simularPromo(promoSim.itemId, idx, pr ? Number(pr.value.replace(',', '.')) : null, es ? Number(es.value) : null);
+}
+
+async function aderirPromo() {
+  if (!promoSim) return;
+  if (!confirm('Aderir ' + promoSim.itemId + ' a "' + (promoSim.promocao.nome || promoSim.promocao.rotulo) + '" por ' + dinheiro(promoSim.precoFinal) + '?')) return;
+  const b = document.getElementById('modalBody');
+  b.innerHTML = '<div class="muted">Enviando ao Mercado Livre…</div>';
+  try {
+    const r = await api('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    b.innerHTML = '<div class="insight">Pronto: o anúncio entrou na promoção. Pode levar alguns minutos para aparecer na tela do ML.</div>';
+    verPromocoes(promoSim.itemId);
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">O ML não aceitou: ' + esc(e.message) + '</div>';
+  }
+  promoSim = null;
+}
+
+// Link vindo da aba Promoções do ml-analytics: ?promo=MLB...&promocao=P-MLB...&tipo=DEAL
+async function abrirPromoDoLink() {
+  const q = new URLSearchParams(location.search);
+  const id = q.get('promo');
+  if (!id) return;
+  await verPromocoes(id);
+  document.getElementById('promoPanel').scrollIntoView({ behavior: 'smooth' });
+  const idx = promoItens.findIndex(p => (q.get('promocao') ? p.promocaoId === q.get('promocao') : p.tipo === q.get('tipo')));
+  if (idx >= 0 && promoItens[idx].aberta && promoItens[idx].suportada) simularPromo(id, idx);
+}
+
 let ultimoItemId = null;
 
 async function simular(itemId, familyName, gtin) {
   ultimoItemId = itemId;
+  document.getElementById('modalTitulo').textContent = 'Recriar anúncio';
   document.getElementById('modal').style.display = 'flex';
   const b = document.getElementById('modalBody');
   b.innerHTML = '<div class="muted">Lendo o anúncio e pedindo ao Mercado Livre para validar o clone…</div>';
