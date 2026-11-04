@@ -105,7 +105,8 @@ export function lerPromocao(raw: any): PromocaoDoAnuncio {
     inicio: raw?.start_date ?? null,
     fim: raw?.finish_date ?? raw?.end_date ?? null,
     suportada: !!modo,
-    aberta: status === 'candidate' || (modo === 'oferta_pronta' && (status === 'started' || status === 'pending')),
+    // "pending" = aprovada e programada (a tela do ML mostra PROGRAMADA): ja aderiu, nao e aberta.
+    aberta: status === 'candidate' || (modo === 'oferta_pronta' && status === 'started'),
   };
 }
 
