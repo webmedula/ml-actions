@@ -18,7 +18,7 @@ describe('lerPromocao', () => {
       ['LIGHTNING', true, true],
       ['SELLER_CAMPAIGN', false, false],
       ['PRICE_MATCHING', true, true],
-      ['SMART_LIGHTNING', true, true],
+      ['SMART_LIGHTNING', false, true],
       ['PRICE_DISCOUNT', true, false],
       ['DEAL', true, true],
     ]);
