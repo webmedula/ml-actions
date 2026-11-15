@@ -1,5 +1,11 @@
 # ml-actions
 
+> **v23 (2026-11-15): a adesão a promoções saiu daqui.** Ela já existia na aba Promoções do ml-analytics (v39+),
+> que mostra o "você recebe" e a promoção em vigor ao lado. Ter dois botões para a mesma escrita no ML confundia.
+> As rotas `/api/promocoes/:itemId`, `/api/promocoes/simular` e `/api/promocoes/aderir` foram removidas; fica só
+> `GET /api/promocoes-historico` (leitura do histórico antigo, usado pelo Gerente IA). `PROMOCOES_ENABLED` não é
+> mais lida aqui e pode ser apagada do EasyPanel. O ml-actions volta a fazer uma coisa só: recriar anúncio.
+
 > **v21 (2026-11-03): aderir a promoções do ML.** Painel "Aderir a uma promoção": informe o MLB, veja
 > as promoções que o ML oferece (convites, ofertas prontas com parte bancada pelo ML, relâmpago,
 > campanhas como 11.11) e **simule** a adesão: preço final, desconto, parte do ML e o pedido exato
