@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'actions v22 (2026-11-04)',
+  appVersion: 'actions v23 (2026-11-15)',
 
   port: Number(process.env.PORT || 3011),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -26,12 +26,6 @@ export const config = {
    */
   recreateEnabled: String(process.env.RECREATE_ENABLED || '').toLowerCase() === 'true',
 
-  /**
-   * v21: TRAVA DA ADESAO A PROMOCOES, separada da recriacao. Desligada, o servico lista e simula
-   * a adesao, mas nao adere. Ligue com PROMOCOES_ENABLED=true (exige permissao de escrita de
-   * promocoes no app do ML).
-   */
-  promocoesEnabled: String(process.env.PROMOCOES_ENABLED || '').toLowerCase() === 'true',
 
   /** Nota de corte usada so pra mostrar o contraponto ("quantas notas 5 resolveriam sem recriar"). */
   ratingsMinScore: Number(process.env.RATINGS_MIN_SCORE || 4.5),
